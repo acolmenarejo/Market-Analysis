@@ -51,9 +51,9 @@ API_ENDPOINTS = {
     'polymarket_gamma': 'https://gamma-api.polymarket.com',
     'polymarket_clob': 'https://clob.polymarket.com',
 
-    # Congress
-    'house_stock_watcher': 'https://house-stock-watcher-data.s3-us-west-2.amazonaws.com/data/all_transactions.json',
-    'senate_stock_watcher': 'https://senate-stock-watcher-data.s3-us-west-2.amazonaws.com/aggregate/all_transactions.json',
+    # Congress - Alternativas si S3 falla
+    'house_stock_watcher': 'https://housestockwatcher.com/api/all_transactions',
+    'senate_stock_watcher': 'https://senatestockwatcher.com/api/all_transactions',
 
     # Noticias
     'finnhub': 'https://finnhub.io/api/v1',

@@ -36,10 +36,18 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.api_config import API_ENDPOINTS, RATE_LIMITS, CONGRESS_CONFIG
 
+# Integración con base de datos local
+try:
+    from integrations.signal_database import SignalDatabase
+    DB_AVAILABLE = True
+except ImportError:
+    DB_AVAILABLE = False
+
 
 class CongressTracker:
     """
     Rastrea y analiza trades de congresistas.
+    Integrado con base de datos local para persistencia y fallback.
     """
 
     def __init__(self, config: Optional[Dict] = None):
@@ -49,10 +57,20 @@ class CongressTracker:
         self._cache = {}
         self._cache_time = {}
 
+        # Inicializar base de datos local
+        self.db = SignalDatabase() if DB_AVAILABLE else None
+
+    def _get_headers(self) -> Dict:
+        """Headers para evitar bloqueo por User-Agent"""
+        return {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json',
+        }
+
     def _fetch_house_trades(self) -> List[Dict]:
         """Obtiene trades de la Cámara de Representantes"""
         try:
-            response = requests.get(self.house_url, timeout=30)
+            response = requests.get(self.house_url, headers=self._get_headers(), timeout=30)
             response.raise_for_status()
             return response.json()
         except Exception as e:
@@ -62,7 +80,7 @@ class CongressTracker:
     def _fetch_senate_trades(self) -> List[Dict]:
         """Obtiene trades del Senado"""
         try:
-            response = requests.get(self.senate_url, timeout=30)
+            response = requests.get(self.senate_url, headers=self._get_headers(), timeout=30)
             response.raise_for_status()
             return response.json()
         except Exception as e:
@@ -154,13 +172,14 @@ class CongressTracker:
     def fetch_all_trades(self, use_cache: bool = True) -> pd.DataFrame:
         """
         Obtiene todos los trades de House y Senate.
+        Integrado con base de datos local para persistencia y fallback.
 
         Returns:
             DataFrame con todos los trades normalizados
         """
         cache_key = 'all_trades'
 
-        # Check cache
+        # Check memory cache
         if use_cache and cache_key in self._cache:
             cache_age = datetime.now() - self._cache_time.get(cache_key, datetime.min)
             if cache_age.total_seconds() < 3600:  # 1 hour cache
@@ -168,7 +187,7 @@ class CongressTracker:
 
         print("  Fetching Congress trades...")
 
-        # Fetch data
+        # Fetch data from APIs
         house_trades = self._fetch_house_trades()
         time.sleep(RATE_LIMITS['house_stock_watcher']['delay_seconds'])
         senate_trades = self._fetch_senate_trades()
@@ -186,35 +205,82 @@ class CongressTracker:
             if normalized['ticker']:
                 all_trades.append(normalized)
 
+        # Si obtuvimos datos de las APIs, almacenar en DB local
+        if all_trades and self.db:
+            stored = self.db.store_congress_trades_bulk(all_trades)
+            if stored > 0:
+                print(f"  Almacenados {stored} nuevos trades en base de datos local")
+
+        # Si NO obtuvimos datos de APIs, usar base de datos local como fallback
+        if not all_trades and self.db:
+            print("  APIs no disponibles, usando datos locales...")
+            db_trades = self.db.get_congress_trades(days=365)
+            if db_trades:
+                # Normalizar nombres de columnas de DB a formato esperado
+                for trade in db_trades:
+                    # DB usa 'action', DataFrame espera 'type'
+                    if 'action' in trade and 'type' not in trade:
+                        action = trade['action'].upper() if trade['action'] else ''
+                        if 'PURCHASE' in action or 'BUY' in action:
+                            trade['type'] = 'PURCHASE'
+                        elif 'SALE' in action or 'SELL' in action:
+                            trade['type'] = 'SALE'
+                        else:
+                            trade['type'] = action
+                    # Añadir campos que pueden faltar
+                    trade.setdefault('amount_range', '')
+                    trade.setdefault('is_option', False)
+                    trade.setdefault('asset_type', 'Stock')
+                    trade.setdefault('asset_description', '')
+                    trade.setdefault('state', '')
+                    trade.setdefault('district', '')
+                all_trades = db_trades
+                print(f"  Recuperados {len(db_trades)} trades de base de datos local")
+
         df = pd.DataFrame(all_trades)
 
         if not df.empty:
             # Convertir fechas
-            df['transaction_date'] = pd.to_datetime(df['transaction_date'], errors='coerce')
-            df['disclosure_date'] = pd.to_datetime(df['disclosure_date'], errors='coerce')
+            if 'transaction_date' in df.columns:
+                df['transaction_date'] = pd.to_datetime(df['transaction_date'], errors='coerce')
+            if 'disclosure_date' in df.columns:
+                df['disclosure_date'] = pd.to_datetime(df['disclosure_date'], errors='coerce')
 
             # Ordenar por fecha más reciente
-            df = df.sort_values('transaction_date', ascending=False)
+            if 'transaction_date' in df.columns:
+                df = df.sort_values('transaction_date', ascending=False)
 
-        # Cache
+        # Memory cache
         self._cache[cache_key] = df
         self._cache_time[cache_key] = datetime.now()
 
         print(f"  Found {len(df)} trades total")
         return df
 
-    def get_recent_trades(self, days: int = None) -> pd.DataFrame:
+    def get_recent_trades(self, days: int = None, all_available: bool = False) -> pd.DataFrame:
         """
         Obtiene trades recientes dentro del período especificado.
+
+        Args:
+            days: Número de días hacia atrás para filtrar
+            all_available: Si True, devuelve todos los trades sin filtro de fecha
         """
         days = days or self.config['lookback_days']
-        cutoff_date = datetime.now() - timedelta(days=days)
 
         df = self.fetch_all_trades()
         if df.empty:
             return df
 
+        if all_available:
+            return df
+
+        cutoff_date = datetime.now() - timedelta(days=days)
         recent = df[df['transaction_date'] >= cutoff_date].copy()
+
+        # Si no hay trades recientes, devolver todos los disponibles como fallback
+        if recent.empty and not df.empty:
+            return df
+
         return recent
 
     def get_trades_by_politician(self, politician_name: str,

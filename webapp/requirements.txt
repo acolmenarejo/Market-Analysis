@@ -1,0 +1,34 @@
+# Market Analysis Web App - Requirements
+# Install with: pip install -r webapp/requirements.txt
+
+# Web Framework
+streamlit>=1.30.0
+
+# Data & Finance
+yfinance>=0.2.35
+pandas>=2.0.0
+numpy>=1.24.0
+pandas-ta>=0.3.14b
+
+# Visualization
+plotly>=5.18.0
+
+# Web Scraping (Capitol Trades)
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+
+# Sentiment Analysis
+vaderSentiment>=3.3.2
+
+# Database
+# SQLite is built-in to Python
+
+# HTTP client
+aiohttp>=3.9.0
+
+# Optional: for more advanced charts
+# mplfinance>=0.12.10
+
+# Existing requirements from parent project
+# (these are probably already installed)
+openpyxl>=3.1.2
