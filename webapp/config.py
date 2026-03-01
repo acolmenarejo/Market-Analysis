@@ -125,6 +125,14 @@ def get_finnhub_key() -> str:
     """Obtiene la API key de Finnhub"""
     key = FINNHUB_API_KEY
 
+    # Try Streamlit secrets (for Streamlit Community Cloud)
+    if not key:
+        try:
+            import streamlit as st
+            key = st.secrets.get('FINNHUB_API_KEY', '')
+        except Exception:
+            pass
+
     if not key:
         # Intentar leer de archivo .env si existe
         env_file = ROOT_DIR / '.env'

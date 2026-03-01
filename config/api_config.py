@@ -138,11 +138,16 @@ SMART_MONEY_CONFIG = {
 
     # Keywords para detectar mercados relevantes para bolsa
     'market_keywords': [
-        'trump', 'biden', 'election', 'fed', 'rate', 'inflation',
-        'china', 'russia', 'war', 'sanction', 'tariff', 'tax',
-        'recession', 'gdp', 'unemployment', 'oil', 'energy',
-        'tech', 'antitrust', 'regulation', 'crypto', 'bitcoin',
-        'default', 'debt ceiling', 'shutdown',
+        'trump', 'biden', 'election', 'president', 'congress', 'senate',
+        'fed', 'rate cut', 'rate hike', 'interest rate', 'rate', 'inflation', 'fomc',
+        'china', 'russia', 'ukraine', 'iran', 'taiwan', 'north korea', 'venezuela', 'maduro',
+        'war', 'strike', 'sanction', 'tariff', 'tax', 'trade war',
+        'recession', 'gdp', 'unemployment', 'jobs', 'cpi', 'ppi',
+        'oil', 'energy', 'opec', 'gas',
+        'tech', 'antitrust', 'regulation', 'sec',
+        'crypto', 'bitcoin', 'ethereum',
+        'default', 'debt ceiling', 'shutdown', 'budget', 'fiscal',
+        'price of', 'market crash', 'bear market', 'bull market',
     ],
 }
 

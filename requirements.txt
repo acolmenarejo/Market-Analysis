@@ -1,23 +1,27 @@
-# Market Analysis - Dependencias
-# ================================
-# Instalación: pip install -r requirements.txt
+# Market Analysis Pro - Dependencies
+# Install: pip install -r requirements.txt
 
-# Core (ya instaladas probablemente)
+# Web Framework
+streamlit>=1.30.0
+
+# Data & Finance
 yfinance>=0.2.36
-openpyxl>=3.1.2
 pandas>=2.0.0
 numpy>=1.24.0
-
-# Análisis Técnico
+scipy>=1.11.0
 pandas-ta>=0.3.14b
+openpyxl>=3.1.2
 
-# Noticias y Sentimiento
-finnhub-python>=2.4.19
-vaderSentiment>=3.3.2
+# Visualization
+plotly>=5.18.0
+streamlit-lightweight-charts>=0.7.20
 
-# HTTP/API Requests
+# HTTP / API
 requests>=2.31.0
+aiohttp>=3.9.0
 
-# Polymarket (GraphQL - opcional)
-# gql>=3.4.0
-# aiohttp>=3.8.0
+# Web Scraping
+beautifulsoup4>=4.12.0
+
+# Sentiment Analysis
+vaderSentiment>=3.3.2

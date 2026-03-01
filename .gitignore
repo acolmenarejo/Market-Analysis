@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.db
+*.xlsx
+data/skew_history_*.json
+.claude/
+.streamlit/secrets.toml
+NUL

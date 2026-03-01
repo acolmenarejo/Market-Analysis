@@ -34,12 +34,50 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
 import time
 import re
-
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.api_config import API_ENDPOINTS, RATE_LIMITS, SMART_MONEY_CONFIG
+# Robust import of config using importlib
+try:
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, root_dir)
+    import importlib.util
+    config_path = os.path.join(root_dir, 'config', 'api_config.py')
+    spec = importlib.util.spec_from_file_location("api_config", config_path)
+    api_config = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(api_config)
+    API_ENDPOINTS = api_config.API_ENDPOINTS
+    RATE_LIMITS = api_config.RATE_LIMITS
+    SMART_MONEY_CONFIG = api_config.SMART_MONEY_CONFIG
+except Exception as e:
+    # Fallback defaults if config fails to load
+    print(f"Warning: Could not load api_config: {e}. Using defaults.")
+    API_ENDPOINTS = {
+        'polymarket_gamma': 'https://gamma-api.polymarket.com',
+        'polymarket_clob': 'https://clob.polymarket.com',
+    }
+    RATE_LIMITS = {
+        'polymarket_gamma': {'calls_per_minute': 100, 'delay_seconds': 0.6},
+    }
+    SMART_MONEY_CONFIG = {
+        'large_bet_threshold': 50000,
+        'whale_bet_threshold': 100000,
+        'fresh_wallet_days': 7,
+        'fresh_wallet_bet_threshold': 10000,
+        'market_categories': ['politics', 'economics', 'fed', 'crypto', 'geopolitics', 'regulatory'],
+        'market_keywords': [
+            'trump', 'biden', 'election', 'president', 'congress', 'senate',
+            'fed', 'rate cut', 'rate hike', 'interest rate', 'rate', 'inflation', 'fomc',
+            'china', 'russia', 'ukraine', 'iran', 'taiwan', 'north korea', 'venezuela', 'maduro',
+            'war', 'strike', 'sanction', 'tariff', 'tax', 'trade war',
+            'recession', 'gdp', 'unemployment', 'jobs', 'cpi', 'ppi',
+            'oil', 'energy', 'opec', 'gas',
+            'tech', 'antitrust', 'regulation', 'sec',
+            'crypto', 'bitcoin', 'ethereum',
+            'default', 'debt ceiling', 'shutdown', 'budget', 'fiscal',
+            'price of', 'market crash', 'bear market', 'bull market',
+        ],
+    }
 
 
 class PolymarketClient:
@@ -68,6 +106,7 @@ class PolymarketClient:
     def get_all_markets(self, limit: int = 100, active_only: bool = True) -> List[Dict]:
         """
         Obtiene todos los mercados de Polymarket.
+        Sorted by 24h volume descending to get the most active markets.
 
         Returns:
             Lista de mercados con info básica
@@ -84,6 +123,9 @@ class PolymarketClient:
         params = {
             'limit': limit,
             'active': 'true' if active_only else 'false',
+            'closed': 'false',
+            'order': 'volume24hr',
+            'ascending': 'false',
         }
 
         data = self._make_request(url, params)
@@ -184,6 +226,17 @@ class PolymarketClient:
             'debt ceiling': {'tickers': ['TLT', 'SPY'], 'sector': 'Fiscal', 'impact': 'HIGH'},
             'government shutdown': {'tickers': ['SPY'], 'sector': 'Fiscal', 'impact': 'MEDIUM'},
             'tariff': {'tickers': ['SPY', 'EEM', 'FXI'], 'sector': 'Trade', 'impact': 'HIGH'},
+            'trade war': {'tickers': ['SPY', 'EEM', 'FXI', 'QQQ'], 'sector': 'Trade', 'impact': 'HIGH'},
+
+            # Interest rates
+            'interest rate': {'tickers': ['TLT', 'XLF', 'QQQ', 'IEF'], 'sector': 'Rates', 'impact': 'HIGH'},
+            'rate cut': {'tickers': ['TLT', 'XLF', 'QQQ'], 'sector': 'Rates', 'impact': 'HIGH'},
+            'rate hike': {'tickers': ['TLT', 'XLF'], 'sector': 'Rates', 'impact': 'HIGH'},
+            'fomc': {'tickers': ['TLT', 'SPY', 'QQQ'], 'sector': 'Rates', 'impact': 'HIGH'},
+
+            # Additional geopolitics
+            'north korea': {'tickers': ['LMT', 'RTX', 'NOC'], 'sector': 'Geopolitics', 'impact': 'MEDIUM'},
+            'strike': {'tickers': ['XLE', 'USO', 'LMT'], 'sector': 'Geopolitics', 'impact': 'HIGH'},
         }
 
         for keyword, mapping in keyword_mappings.items():
@@ -219,8 +272,13 @@ class PolymarketClient:
                 market['impact_analysis'] = impact
                 relevant.append(market)
 
-        # Ordenar por volumen
-        relevant.sort(key=lambda x: x.get('volume', 0) or 0, reverse=True)
+        # Ordenar por volumen (asegurar tipo numérico)
+        def _safe_volume(x):
+            try:
+                return float(x.get('volume', 0) or 0)
+            except (ValueError, TypeError):
+                return 0.0
+        relevant.sort(key=_safe_volume, reverse=True)
 
         return relevant[:limit]
 
@@ -256,7 +314,10 @@ class PolymarketClient:
 
         large_bet_markets = []
         for market in markets:
-            volume_24h = market.get('volume24hr', 0) or 0
+            try:
+                volume_24h = float(market.get('volume24hr', 0) or 0)
+            except (ValueError, TypeError):
+                volume_24h = 0.0
 
             if volume_24h >= threshold:
                 # Calcular nivel de alerta
@@ -288,24 +349,48 @@ class PolymarketClient:
         outcomes = market.get('outcomes', [])
         odds = {}
 
+        # outcomePrices from Gamma API can be a JSON string like '["0.95","0.05"]'
+        outcome_prices_raw = market.get('outcomePrices', [])
+        if isinstance(outcome_prices_raw, str):
+            try:
+                import json
+                outcome_prices_raw = json.loads(outcome_prices_raw)
+            except (json.JSONDecodeError, ValueError):
+                outcome_prices_raw = []
+
+        # outcomes can also be a JSON string
+        if isinstance(outcomes, str):
+            try:
+                import json
+                outcomes = json.loads(outcomes)
+            except (json.JSONDecodeError, ValueError):
+                outcomes = []
+
         if isinstance(outcomes, list):
             for i, outcome in enumerate(outcomes):
-                if isinstance(outcome, dict):
-                    name = outcome.get('name', f'Outcome {i}')
-                    price = outcome.get('price', 0)
-                else:
-                    name = str(outcome)
-                    price = market.get(f'outcomePrices', [0])[i] if i < len(market.get('outcomePrices', [])) else 0
-                odds[name] = round(float(price) * 100 if price else 0, 1)
+                try:
+                    if isinstance(outcome, dict):
+                        name = outcome.get('name', f'Outcome {i}')
+                        price = outcome.get('price', 0)
+                    else:
+                        name = str(outcome)
+                        price = outcome_prices_raw[i] if i < len(outcome_prices_raw) else 0
+                    price_float = float(price) if price else 0.0
+                    odds[name] = round(price_float * 100, 1)
+                except (ValueError, TypeError, IndexError):
+                    continue
 
         # Fallback: buscar en otros campos
         if not odds:
-            yes_price = market.get('yesPrice') or market.get('bestAsk')
-            no_price = market.get('noPrice') or market.get('bestBid')
-            if yes_price:
-                odds['Yes'] = round(float(yes_price) * 100, 1)
-            if no_price:
-                odds['No'] = round(float(no_price) * 100, 1)
+            try:
+                yes_price = market.get('yesPrice') or market.get('bestAsk')
+                no_price = market.get('noPrice') or market.get('bestBid')
+                if yes_price:
+                    odds['Yes'] = round(float(yes_price) * 100, 1)
+                if no_price:
+                    odds['No'] = round(float(no_price) * 100, 1)
+            except (ValueError, TypeError):
+                pass
 
         return odds
 
@@ -377,12 +462,16 @@ class PolymarketClient:
             affected_tickers = impact.get('relevant_tickers', [])
 
             if ticker.upper() in [t.upper() for t in affected_tickers]:
+                try:
+                    vol_24h = float(market.get('volume24hr', 0) or 0)
+                except (ValueError, TypeError):
+                    vol_24h = 0.0
                 relevant_markets.append({
                     'question': market.get('question', ''),
-                    'volume_24h': market.get('volume24hr', 0),
+                    'volume_24h': vol_24h,
                     'odds': self._get_current_odds(market),
                 })
-                total_volume += market.get('volume24hr', 0) or 0
+                total_volume += vol_24h
 
                 # Evaluar sentimiento basado en el mercado
                 # (simplificado - en producción sería más sofisticado)
@@ -436,6 +525,105 @@ class PolymarketClient:
             'bearish_signals': bearish_signals,
             'confidence': confidence,
         }
+
+    def detect_suspicious_bets(self) -> List[Dict]:
+        """
+        Detecta apuestas sospechosas que pueden indicar info privilegiada.
+
+        Criterios de sospecha:
+        1. Volumen 24h desproporcionado vs volumen total (>20% en un dia)
+        2. Odds muy extremas (>90% o <10%) con volumen alto
+        3. Mercados con fecha de resolución cercana + volumen alto
+        4. Volumen concentrado en un outcome específico
+        """
+        markets = self.get_all_markets(limit=200)
+        suspicious = []
+
+        for market in markets:
+            try:
+                volume_total = float(market.get('volume', 0) or 0)
+                volume_24h = float(market.get('volume24hr', 0) or 0)
+                liquidity = float(market.get('liquidity', 0) or 0)
+                question = market.get('question', '')
+
+                if volume_24h < 10000:  # Skip low-volume markets
+                    continue
+
+                suspicion_score = 0
+                reasons = []
+
+                # 1. Volume concentration: 24h vol is large % of total
+                if volume_total > 0:
+                    vol_ratio = (volume_24h / volume_total) * 100
+                    if vol_ratio > 30:
+                        suspicion_score += 40
+                        reasons.append(f"Vol 24h = {vol_ratio:.0f}% del total (concentracion extrema)")
+                    elif vol_ratio > 15:
+                        suspicion_score += 20
+                        reasons.append(f"Vol 24h = {vol_ratio:.0f}% del total")
+
+                # 2. Very extreme odds with high volume
+                odds = self._get_current_odds(market)
+                max_odd = max(odds.values()) if odds else 50
+                min_odd = min(odds.values()) if odds else 50
+                if max_odd > 92 and volume_24h > 50000:
+                    suspicion_score += 30
+                    reasons.append(f"Odds extremas ({max_odd:.0f}%) con vol alto ${volume_24h:,.0f}")
+                elif max_odd > 85 and volume_24h > 100000:
+                    suspicion_score += 20
+                    reasons.append(f"Odds altas ({max_odd:.0f}%) con gran volumen")
+
+                # 3. High volume relative to liquidity (someone pushing through)
+                if liquidity > 0 and volume_24h > liquidity * 3:
+                    suspicion_score += 25
+                    reasons.append(f"Vol 24h ({volume_24h/1000:.0f}k) >> liquidez ({liquidity/1000:.0f}k)")
+                elif liquidity > 0 and volume_24h > liquidity * 1.5:
+                    suspicion_score += 10
+                    reasons.append(f"Vol 24h supera liquidez")
+
+                # 4. Specific date/event markets with whale volume (Maduro-type)
+                has_specific_date = any(w in question.lower() for w in [
+                    'before', 'by ', 'on ', 'january', 'february', 'march', 'april',
+                    'may ', 'june', 'july', 'august', 'september', 'october',
+                    'november', 'december', 'q1', 'q2', 'q3', 'q4',
+                    'antes de', 'para el', 'en enero', 'en febrero',
+                ])
+                if has_specific_date and volume_24h > 100000:
+                    suspicion_score += 35
+                    reasons.append(f"Apuesta grande (${volume_24h/1000:.0f}k) en fecha especifica")
+                elif has_specific_date and volume_24h > 50000:
+                    suspicion_score += 15
+                    reasons.append(f"Vol significativo en mercado con fecha especifica")
+
+                # 5. Whale-level single-day activity
+                if volume_24h > 500000:
+                    suspicion_score += 25
+                    reasons.append(f"Volumen whale: ${volume_24h/1000:.0f}k en 24h")
+                elif volume_24h > 200000:
+                    suspicion_score += 10
+                    reasons.append(f"Volumen elevado: ${volume_24h/1000:.0f}k en 24h")
+
+                if suspicion_score >= 30:
+                    impact = self._estimate_market_impact(market)
+                    suspicious.append({
+                        'question': question[:120],
+                        'suspicion_score': min(suspicion_score, 100),
+                        'volume_24h': volume_24h,
+                        'volume_total': volume_total,
+                        'liquidity': liquidity,
+                        'odds': odds,
+                        'reasons': reasons,
+                        'relevant_tickers': impact.get('relevant_tickers', []),
+                        'sector': impact.get('sector', 'General'),
+                        'market_id': market.get('id', ''),
+                        'end_date': market.get('endDate', ''),
+                    })
+
+            except Exception:
+                continue
+
+        suspicious.sort(key=lambda x: x['suspicion_score'], reverse=True)
+        return suspicious[:15]
 
     def generate_excel_data(self) -> List[Dict]:
         """

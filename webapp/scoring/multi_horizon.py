@@ -59,13 +59,14 @@ class MultiHorizonResult:
 # =============================================================================
 
 SHORT_TERM_WEIGHTS = {
-    # Factores técnicos (50%)
-    'rsi': 0.12,
-    'macd': 0.10,
-    'volume_profile': 0.10,
-    'vwap_position': 0.08,
+    # Factores técnicos (45%)
+    'rsi': 0.10,
+    'macd': 0.08,
+    'volume_profile': 0.08,
+    'vwap_position': 0.06,
     'bollinger_position': 0.05,
     'short_term_trend': 0.05,
+    'konkorde': 0.08,  # NEW: Institutional vs Retail flow
 
     # Momentum (25%)
     'momentum_1w': 0.08,
@@ -294,6 +295,22 @@ class MultiHorizonScorer:
             components['short_term_trend'] = 40
         else:
             components['short_term_trend'] = 30
+
+        # Konkorde (Institutional vs Retail flow)
+        konkorde_score = data.get('konkorde_score', 50)
+        konkorde_signal = data.get('konkorde_signal', 'neutral')
+
+        # Adjust score based on signal type
+        if konkorde_signal == 'strong_bullish':
+            components['konkorde'] = min(95, konkorde_score + 10)  # Both buying - very bullish
+        elif konkorde_signal == 'accumulation':
+            components['konkorde'] = min(90, konkorde_score + 5)   # Smart money buying - bullish
+        elif konkorde_signal == 'distribution':
+            components['konkorde'] = max(10, konkorde_score - 5)   # Smart money selling - bearish
+        elif konkorde_signal == 'strong_bearish':
+            components['konkorde'] = max(5, konkorde_score - 10)   # Both selling - very bearish
+        else:
+            components['konkorde'] = konkorde_score
 
         # === FACTORES DE MOMENTUM ===
 
@@ -779,6 +796,16 @@ class MultiHorizonScorer:
             parts.append("compras de congresistas recientes")
         elif congress < 30:
             parts.append("ventas de congresistas recientes")
+
+        konkorde = components.get('konkorde', 50)
+        if konkorde > 75:
+            parts.append("Konkorde: institucionales comprando")
+        elif konkorde > 65:
+            parts.append("Konkorde: acumulación institucional")
+        elif konkorde < 35:
+            parts.append("Konkorde: distribución institucional")
+        elif konkorde < 25:
+            parts.append("Konkorde: institucionales vendiendo")
 
         if not parts:
             return "Señales técnicas mixtas"
