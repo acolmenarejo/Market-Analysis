@@ -1819,26 +1819,49 @@ def show_dashboard():
         st.video("https://www.youtube.com/watch?v=iEpJwprxDdk", autoplay=True, muted=True)
 
     with col_markets:
-        # Global Markets Grid — 4 columns, worldmonitor style
+        # Global Markets Grid — 6 columns, worldmonitor style with all asset classes
         market_groups = [
-            ('INDICES', [
+            ('US INDICES', [
                 ('^GSPC', 'S&P 500', '#58a6ff'), ('^IXIC', 'Nasdaq', '#bc8cff'),
                 ('^DJI', 'Dow', '#3fb950'), ('^RUT', 'Russell', '#d29922'),
             ]),
+            ('EU / ASIA', [
+                ('^STOXX50E', 'EuroStoxx', '#bc8cff'), ('^GDAXI', 'DAX', '#58a6ff'),
+                ('^FTSE', 'FTSE', '#3fb950'), ('^N225', 'Nikkei', '#d29922'),
+            ]),
             ('COMMODITIES', [
                 ('GC=F', 'Gold', '#d29922'), ('SI=F', 'Silver', '#8b949e'),
-                ('CL=F', 'Crude Oil', '#f0883e'), ('NG=F', 'Nat Gas', '#39d2c0'),
+                ('CL=F', 'WTI Oil', '#f0883e'), ('NG=F', 'Nat Gas', '#39d2c0'),
+                ('HG=F', 'Copper', '#bc8cff'),
             ]),
-            ('RATES & FX', [
+            ('RATES', [
+                ('^IRX', '3M T-Bill', '#8b949e'), ('^FVX', '5Y Yield', '#d29922'),
                 ('^TNX', '10Y Yield', '#58a6ff'), ('^TYX', '30Y Yield', '#bc8cff'),
-                ('DX-Y.NYB', 'DXY', '#3fb950'), ('EURUSD=X', 'EUR/USD', '#d29922'),
             ]),
-            ('CRYPTO & VOL', [
+            ('FX & VOL', [
+                ('DX-Y.NYB', 'DXY', '#3fb950'), ('EURUSD=X', 'EUR/USD', '#d29922'),
+                ('GBPUSD=X', 'GBP/USD', '#58a6ff'), ('^VIX', 'VIX', '#f85149'),
+            ]),
+            ('CRYPTO', [
                 ('BTC-USD', 'Bitcoin', '#f0883e'), ('ETH-USD', 'Ethereum', '#bc8cff'),
-                ('^VIX', 'VIX', '#f85149'), ('SOL-USD', 'Solana', '#39d2c0'),
+                ('SOL-USD', 'Solana', '#39d2c0'),
             ]),
         ]
-        grid_html = '<div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:4px;">'
+
+        # Helper to format price based on instrument type
+        def _fmt_price(sym, price):
+            typ = gf.get(sym, {}).get('type', '')
+            if typ in ('rate',):
+                return f'{price:.2f}%'
+            if typ in ('fx',) and price < 10:
+                return f'{price:.4f}'
+            if price >= 10000:
+                return f'&#36;{price:,.0f}'
+            if price >= 100:
+                return f'&#36;{price:,.1f}'
+            return f'&#36;{price:,.2f}'
+
+        grid_html = '<div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:4px;">'
         for group_name, items in market_groups:
             grid_html += f'''<div style="background:#161b22; border:1px solid #21262d; border-radius:6px; padding:4px 6px;">
                 <div style="font-size:0.5rem; text-transform:uppercase; letter-spacing:0.8px; color:#6e7681; font-weight:600; margin-bottom:4px; border-bottom:1px solid #21262d; padding-bottom:2px;">{group_name}</div>'''
@@ -1846,19 +1869,16 @@ def show_dashboard():
                 d = gf.get(sym, {})
                 price = d.get('price', 0)
                 chg = d.get('change', 0)
+                if price == 0:
+                    continue
                 chg_color = '#3fb950' if chg >= 0 else '#f85149'
                 sign = '+' if chg >= 0 else ''
                 arrow = '▲' if chg >= 0 else '▼'
-                if price >= 10000:
-                    p_str = f'{price:,.0f}'
-                elif price >= 100:
-                    p_str = f'{price:,.1f}'
-                else:
-                    p_str = f'{price:,.2f}'
+                p_str = _fmt_price(sym, price)
                 grid_html += f'''<div style="display:flex; justify-content:space-between; align-items:center; padding:2px 0; border-bottom:1px solid #1c2333;">
                     <span style="font-size:0.6rem; color:{color}; font-weight:600;">{label}</span>
                     <div style="text-align:right;">
-                        <span style="font-size:0.65rem; color:#e6edf3; font-weight:700;">&#36;{p_str}</span>
+                        <span style="font-size:0.65rem; color:#e6edf3; font-weight:700;">{p_str}</span>
                         <span style="font-size:0.52rem; color:{chg_color}; font-weight:600; margin-left:3px;">{arrow}{sign}{chg:.2f}%</span>
                     </div>
                 </div>'''
@@ -2987,12 +3007,21 @@ def _show_technical_tab(ticker: str, data: dict):
     with col_kr:
         konkorde_y = st.slider("Rango Y Konkorde", 10, 100, 30, 5)
 
-    # Reload hist for selected period + interval
+    # Reload hist for selected period + interval (with retry on rate limit)
     try:
+        import time as _time
         stock = yf.Ticker(ticker)
-        hist = stock.history(period=chart_period, interval=chart_interval)
-        if not hist.empty:
-            data['history'] = hist
+        for _attempt in range(3):
+            try:
+                hist = stock.history(period=chart_period, interval=chart_interval)
+                if not hist.empty:
+                    data['history'] = hist
+                break
+            except Exception as _e:
+                if 'too many requests' in str(_e).lower() or '429' in str(_e):
+                    _time.sleep(2 * (2 ** _attempt))
+                else:
+                    break
     except Exception:
         pass
 
@@ -3197,12 +3226,22 @@ def _show_options_tab(ticker: str, data: dict):
 
     st.markdown("### Options & Gamma Analysis")
 
-    # Fetch options data
-    try:
-        stock = yf.Ticker(ticker)
-        expirations = stock.options
-    except Exception as e:
-        st.error(f"Error obteniendo opciones: {e}")
+    # Fetch options data (with retry on rate limit)
+    import time as _time
+    stock = yf.Ticker(ticker)
+    expirations = None
+    for _attempt in range(3):
+        try:
+            expirations = stock.options
+            break
+        except Exception as e:
+            if 'too many requests' in str(e).lower() or '429' in str(e):
+                _time.sleep(2 * (2 ** _attempt))
+            else:
+                st.error(f"Error obteniendo opciones: {e}")
+                return
+    if expirations is None:
+        st.error("Rate limited por yfinance. Espera unos segundos y recarga.")
         return
 
     if not expirations:

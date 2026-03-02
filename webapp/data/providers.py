@@ -213,15 +213,31 @@ def _get_fallback_congress_data() -> pd.DataFrame:
     return pd.DataFrame(columns=columns)
 
 
+def _yf_retry(fn, retries=3, base_delay=2):
+    """Execute a yfinance call with exponential backoff on rate limit."""
+    import time
+    for attempt in range(retries):
+        try:
+            return fn()
+        except Exception as e:
+            err_str = str(e).lower()
+            if 'too many requests' in err_str or 'rate limit' in err_str or '429' in err_str:
+                if attempt < retries - 1:
+                    time.sleep(base_delay * (2 ** attempt))
+                    continue
+            raise
+    return None
+
+
 @st.cache_data(ttl=300, show_spinner=False)  # 5 minutos - aumentado para mejor performance
 def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
     """Obtiene datos completos de un stock"""
     try:
         stock = yf.Ticker(ticker)
 
-        # Datos de precio
-        hist = stock.history(period=period)
-        info = stock.info or {}
+        # Datos de precio (with retry on rate limit)
+        hist = _yf_retry(lambda: stock.history(period=period)) or pd.DataFrame()
+        info = _yf_retry(lambda: stock.info) or {}
 
         # Calcular métricas técnicas básicas
         if not hist.empty:
@@ -1020,69 +1036,100 @@ def get_sector_momentum() -> Dict[str, Dict]:
 @st.cache_data(ttl=180, show_spinner=False)
 def get_global_futures() -> Dict[str, Dict]:
     """
-    Fetch global futures/indices data for market overview.
+    Fetch global futures, indices, commodities, rates, FX, and crypto.
     Returns dict with price, change, prev_close for each instrument.
+    Includes both futures (ES=F) and spot indices (^GSPC) for dashboard grid.
     """
-    FUTURES = {
+    import time
+
+    INSTRUMENTS = {
         # US Futures
-        'ES=F':      {'name': 'S&P 500',      'region': 'US',     'type': 'equity'},
-        'NQ=F':      {'name': 'Nasdaq 100',    'region': 'US',     'type': 'equity'},
-        'YM=F':      {'name': 'Dow Jones',     'region': 'US',     'type': 'equity'},
-        'RTY=F':     {'name': 'Russell 2000',  'region': 'US',     'type': 'equity'},
+        'ES=F':      {'name': 'S&P 500 Fut',   'region': 'US',     'type': 'equity'},
+        'NQ=F':      {'name': 'Nasdaq Fut',     'region': 'US',     'type': 'equity'},
+        'YM=F':      {'name': 'Dow Fut',        'region': 'US',     'type': 'equity'},
+        'RTY=F':     {'name': 'Russell Fut',    'region': 'US',     'type': 'equity'},
+        # US Spot Indices (for grid)
+        '^GSPC':     {'name': 'S&P 500',        'region': 'US',     'type': 'index'},
+        '^IXIC':     {'name': 'Nasdaq',         'region': 'US',     'type': 'index'},
+        '^DJI':      {'name': 'Dow',            'region': 'US',     'type': 'index'},
+        '^RUT':      {'name': 'Russell 2000',   'region': 'US',     'type': 'index'},
         # Europe
-        '^STOXX50E': {'name': 'Euro Stoxx 50', 'region': 'Europe', 'type': 'equity'},
-        '^FTSE':     {'name': 'FTSE 100',      'region': 'Europe', 'type': 'equity'},
-        '^GDAXI':    {'name': 'DAX',           'region': 'Europe', 'type': 'equity'},
+        '^STOXX50E': {'name': 'Euro Stoxx 50',  'region': 'Europe', 'type': 'equity'},
+        '^FTSE':     {'name': 'FTSE 100',       'region': 'Europe', 'type': 'equity'},
+        '^GDAXI':    {'name': 'DAX',            'region': 'Europe', 'type': 'equity'},
+        '^IBEX':     {'name': 'IBEX 35',        'region': 'Europe', 'type': 'equity'},
         # Asia
-        '^N225':     {'name': 'Nikkei 225',    'region': 'Asia',   'type': 'equity'},
-        '^HSI':      {'name': 'Hang Seng',     'region': 'Asia',   'type': 'equity'},
-        '000001.SS': {'name': 'Shanghai',      'region': 'Asia',   'type': 'equity'},
+        '^N225':     {'name': 'Nikkei 225',     'region': 'Asia',   'type': 'equity'},
+        '^HSI':      {'name': 'Hang Seng',      'region': 'Asia',   'type': 'equity'},
+        '000001.SS': {'name': 'Shanghai',       'region': 'Asia',   'type': 'equity'},
         # Commodities
-        'GC=F':      {'name': 'Gold',          'region': 'Global', 'type': 'commodity'},
-        'CL=F':      {'name': 'Crude Oil',     'region': 'Global', 'type': 'commodity'},
-        'SI=F':      {'name': 'Silver',        'region': 'Global', 'type': 'commodity'},
-        # Bonds
-        'ZB=F':      {'name': '30Y Bond',      'region': 'US',     'type': 'bond'},
-        'ZN=F':      {'name': '10Y Note',      'region': 'US',     'type': 'bond'},
+        'GC=F':      {'name': 'Gold',           'region': 'Global', 'type': 'commodity'},
+        'SI=F':      {'name': 'Silver',         'region': 'Global', 'type': 'commodity'},
+        'CL=F':      {'name': 'Crude Oil WTI',  'region': 'Global', 'type': 'commodity'},
+        'BZ=F':      {'name': 'Brent Oil',      'region': 'Global', 'type': 'commodity'},
+        'NG=F':      {'name': 'Natural Gas',    'region': 'Global', 'type': 'commodity'},
+        'HG=F':      {'name': 'Copper',         'region': 'Global', 'type': 'commodity'},
+        # Rates & FX
+        '^TNX':      {'name': '10Y Yield',      'region': 'US',     'type': 'rate'},
+        '^TYX':      {'name': '30Y Yield',      'region': 'US',     'type': 'rate'},
+        '^FVX':      {'name': '5Y Yield',       'region': 'US',     'type': 'rate'},
+        '^IRX':      {'name': '3M T-Bill',      'region': 'US',     'type': 'rate'},
+        'DX-Y.NYB':  {'name': 'DXY',            'region': 'Global', 'type': 'fx'},
+        'EURUSD=X':  {'name': 'EUR/USD',        'region': 'Global', 'type': 'fx'},
+        'GBPUSD=X':  {'name': 'GBP/USD',        'region': 'Global', 'type': 'fx'},
+        'JPY=X':     {'name': 'USD/JPY',        'region': 'Global', 'type': 'fx'},
+        # Bonds (futures)
+        'ZB=F':      {'name': '30Y Bond Fut',   'region': 'US',     'type': 'bond'},
+        'ZN=F':      {'name': '10Y Note Fut',   'region': 'US',     'type': 'bond'},
         # Crypto
-        'BTC-USD':   {'name': 'Bitcoin',       'region': 'Global', 'type': 'crypto'},
-        'ETH-USD':   {'name': 'Ethereum',      'region': 'Global', 'type': 'crypto'},
+        'BTC-USD':   {'name': 'Bitcoin',        'region': 'Global', 'type': 'crypto'},
+        'ETH-USD':   {'name': 'Ethereum',       'region': 'Global', 'type': 'crypto'},
+        'SOL-USD':   {'name': 'Solana',         'region': 'Global', 'type': 'crypto'},
+        # Volatility
+        '^VIX':      {'name': 'VIX',            'region': 'US',     'type': 'volatility'},
     }
 
-    tickers = list(FUTURES.keys())
+    tickers = list(INSTRUMENTS.keys())
     results = {}
 
-    try:
-        data = yf.download(tickers, period='5d', group_by='ticker', progress=False, threads=True)
-        for ticker in tickers:
-            try:
-                if len(tickers) == 1:
-                    hist = data
-                else:
-                    hist = data[ticker] if ticker in data.columns.get_level_values(0) else None
-                if hist is None or hist.empty:
+    # Download in two batches to reduce rate limit risk
+    batch_size = 25
+    for batch_start in range(0, len(tickers), batch_size):
+        batch = tickers[batch_start:batch_start + batch_size]
+        try:
+            data = yf.download(batch, period='5d', group_by='ticker', progress=False, threads=True)
+            for ticker in batch:
+                try:
+                    if len(batch) == 1:
+                        hist = data
+                    else:
+                        hist = data[ticker] if ticker in data.columns.get_level_values(0) else None
+                    if hist is None or hist.empty:
+                        continue
+                    closes = hist['Close'].dropna()
+                    if len(closes) < 2:
+                        continue
+                    current = float(closes.iloc[-1])
+                    prev = float(closes.iloc[-2])
+                    change_pct = ((current / prev) - 1) * 100
+                    change_abs = current - prev
+                    meta = INSTRUMENTS[ticker]
+                    results[ticker] = {
+                        'name': meta['name'],
+                        'region': meta['region'],
+                        'type': meta['type'],
+                        'price': current,
+                        'prev_close': prev,
+                        'change_pct': change_pct,
+                        'change_abs': change_abs,
+                        'change': change_pct,  # alias for dashboard grid
+                    }
+                except Exception:
                     continue
-                closes = hist['Close'].dropna()
-                if len(closes) < 2:
-                    continue
-                current = float(closes.iloc[-1])
-                prev = float(closes.iloc[-2])
-                change_pct = ((current / prev) - 1) * 100
-                change_abs = current - prev
-                meta = FUTURES[ticker]
-                results[ticker] = {
-                    'name': meta['name'],
-                    'region': meta['region'],
-                    'type': meta['type'],
-                    'price': current,
-                    'prev_close': prev,
-                    'change_pct': change_pct,
-                    'change_abs': change_abs,
-                }
-            except Exception:
-                continue
-    except Exception:
-        pass
+        except Exception:
+            pass
+        if batch_start + batch_size < len(tickers):
+            time.sleep(0.5)  # Small delay between batches
 
     return results
 

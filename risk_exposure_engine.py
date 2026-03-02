@@ -1219,25 +1219,71 @@ class MacroDeteriorationModule:
         return min(self.score, 100)
 
     def _fetch_macro_data(self):
-        """Descarga datos macro de FRED."""
-        if not FRED_API_KEY:
-            return {}
+        """Descarga datos macro de FRED, con fallback a yfinance."""
+        # Try FRED first
+        if FRED_API_KEY:
+            try:
+                from fredapi import Fred
+                fred = Fred(api_key=FRED_API_KEY)
+                data = {}
+                series = {
+                    'T10Y2Y': '10Y-2Y Spread',
+                    'BAMLH0A0HYM2': 'HY Spread',
+                    'UNRATE': 'Unemployment',
+                    'ICSA': 'Initial Claims',
+                }
+                for sid, name in series.items():
+                    try:
+                        data[sid] = fred.get_series(sid, observation_start='2024-01-01')
+                    except:
+                        pass
+                if data:
+                    return data
+            except:
+                pass
 
+        # Fallback: use yfinance for yield curve and credit proxies
         try:
-            from fredapi import Fred
-            fred = Fred(api_key=FRED_API_KEY)
+            import yfinance as yf
+            import pandas as pd
             data = {}
-            series = {
-                'T10Y2Y': '10Y-2Y Spread',
-                'BAMLH0A0HYM2': 'HY Spread',
-                'UNRATE': 'Unemployment',
-                'ICSA': 'Initial Claims',
-            }
-            for sid, name in series.items():
-                try:
-                    data[sid] = fred.get_series(sid, observation_start='2024-01-01')
-                except:
-                    pass
+
+            # Yield curve: 10Y - 2Y (via ^TNX and ^IRX as 3M proxy)
+            try:
+                tsy = yf.download(['^TNX', '^FVX', '^IRX'], period='6mo', progress=False, threads=True)
+                if not tsy.empty:
+                    tnx = tsy['^TNX']['Close'].dropna() if '^TNX' in tsy.columns.get_level_values(0) else pd.Series()
+                    irx = tsy['^IRX']['Close'].dropna() if '^IRX' in tsy.columns.get_level_values(0) else pd.Series()
+                    if not tnx.empty and not irx.empty:
+                        # Approximate 10Y-2Y spread using 10Y - 3M (close enough for risk signal)
+                        spread = tnx - irx.reindex(tnx.index, method='ffill')
+                        spread = spread.dropna()
+                        if not spread.empty:
+                            data['T10Y2Y'] = spread
+            except:
+                pass
+
+            # HY spread proxy: compare HYG (HY bond ETF) vs LQD (IG bond ETF) returns
+            # Rising spread = HYG underperforms LQD = credit stress
+            try:
+                etfs = yf.download(['HYG', 'LQD'], period='6mo', progress=False, threads=True)
+                if not etfs.empty:
+                    hyg = etfs['HYG']['Close'].dropna() if 'HYG' in etfs.columns.get_level_values(0) else pd.Series()
+                    lqd = etfs['LQD']['Close'].dropna() if 'LQD' in etfs.columns.get_level_values(0) else pd.Series()
+                    if not hyg.empty and not lqd.empty:
+                        # Ratio: lower = more stress. Invert to approximate spread behavior
+                        ratio = hyg / lqd.reindex(hyg.index, method='ffill')
+                        ratio = ratio.dropna()
+                        if not ratio.empty:
+                            # Convert to approximate spread: baseline ratio ~1.0 = ~4% spread
+                            avg_ratio = ratio.mean()
+                            spread_proxy = (avg_ratio / ratio) * 4.0  # Higher when ratio drops
+                            data['BAMLH0A0HYM2'] = spread_proxy
+            except:
+                pass
+
+            if data:
+                self.signals.append("Datos macro via yfinance (proxy yields + credit ETFs)")
             return data
         except:
             return {}
