@@ -2399,24 +2399,46 @@ def show_dashboard():
             else:
                 trades_sorted = trades_df
 
-            # Styled HTML table
+            # Styled HTML table with both trade date and disclosure date
             table_html = '''<table class="styled-table"><thead><tr>
-                <th>Politician</th><th>Ticker</th><th>Type</th><th>Amount</th><th>Date</th>
+                <th>Politician</th><th>Party</th><th>Ticker</th><th>Company</th><th>Type</th><th>Amount</th><th>Trade Date</th><th>Disclosed</th><th>Delay</th>
             </tr></thead><tbody>'''
-            for _, trade in trades_sorted.head(8).iterrows():
+            for _, trade in trades_sorted.head(10).iterrows():
                 politician = _esc(str(trade.get('politician', 'Unknown')))
+                party = trade.get('party', '')
+                p_color = "#3B82F6" if party == 'D' else ("#EF4444" if party == 'R' else "#94a3b8")
+                p_label = party if party else '?'
                 ticker = trade.get('ticker', 'N/A')
+                company = _esc(str(trade.get('company', ''))[:20])
                 tx_type = trade.get('transaction_type', '')
                 amount = _esc(str(trade.get('amount_range', 'N/A')))
-                date_val = trade.get('disclosed_date', trade.get('traded_date', ''))
-                date_str = str(date_val)[:10] if date_val else ''
+                # Both dates
+                traded_val = trade.get('traded_date', '')
+                disclosed_val = trade.get('disclosed_date', '')
+                traded_str = str(traded_val)[:10] if traded_val and str(traded_val) != 'NaT' else '—'
+                disclosed_str = str(disclosed_val)[:10] if disclosed_val and str(disclosed_val) != 'NaT' else '—'
+                # Delay calculation
+                delay_str = ''
+                try:
+                    if traded_val and disclosed_val and str(traded_val) != 'NaT' and str(disclosed_val) != 'NaT':
+                        from datetime import datetime as _dt
+                        td = pd.to_datetime(disclosed_val) - pd.to_datetime(traded_val)
+                        days_delay = td.days
+                        if days_delay > 45:
+                            delay_str = f'<span style="color:#f85149; font-weight:600;">{days_delay}d</span>'
+                        elif days_delay > 20:
+                            delay_str = f'<span style="color:#d29922;">{days_delay}d</span>'
+                        else:
+                            delay_str = f'{days_delay}d'
+                except Exception:
+                    delay_str = '—'
                 is_insider = trade.get('committee_relevant', False) if 'committee_relevant' in trades_sorted.columns else False
-                insider_badge = ' <span style="background:rgba(248,81,73,0.2);color:#f85149;padding:1px 5px;border-radius:4px;font-size:0.6rem;font-weight:600;">INSIDER</span>' if is_insider else ''
+                insider_badge = ' <span style="background:rgba(248,81,73,0.2);color:#f85149;padding:1px 5px;border-radius:4px;font-size:0.55rem;font-weight:600;">INSIDER</span>' if is_insider else ''
                 if 'buy' in str(tx_type).lower():
                     type_pill = '<span style="background:rgba(63,185,80,0.15); color:#3fb950; padding:2px 8px; border-radius:10px; font-size:0.7rem; font-weight:600;">BUY</span>'
                 else:
                     type_pill = '<span style="background:rgba(248,81,73,0.15); color:#f85149; padding:2px 8px; border-radius:10px; font-size:0.7rem; font-weight:600;">SELL</span>'
-                table_html += f'<tr><td>{politician}{insider_badge}</td><td style="color:#58a6ff; font-weight:600;">{ticker}</td><td>{type_pill}</td><td>{amount}</td><td style="color:#8b949e;">{date_str}</td></tr>'
+                table_html += f'<tr><td>{politician}{insider_badge}</td><td style="color:{p_color}; font-weight:600; text-align:center;">{p_label}</td><td style="color:#58a6ff; font-weight:600;">{ticker}</td><td style="color:#8b949e; font-size:0.7rem;">{company}</td><td>{type_pill}</td><td>{amount}</td><td style="color:#e6edf3;">{traded_str}</td><td style="color:#8b949e;">{disclosed_str}</td><td style="text-align:center;">{delay_str}</td></tr>'
             table_html += '</tbody></table>'
             st.markdown(table_html, unsafe_allow_html=True)
 
@@ -3611,17 +3633,37 @@ def _show_options_tab(ticker: str, data: dict):
             call_wall=rec_call_wall, put_wall=rec_put_wall
         )
 
-        # Display card - split into smaller st.markdown calls to avoid Streamlit HTML parsing issues
+        # Display card - professional strategy recommendation
         risk_color = '#3fb950' if strategy['risk_level'] == 'low' else ('#d29922' if strategy['risk_level'] == 'medium' else '#f85149')
 
-        # Header section
-        st.markdown(f'<div style="background: linear-gradient(135deg, #161b22 0%, #0d1117 100%); border: 2px solid {risk_color}; border-radius: 12px 12px 0 0; padding: 20px 20px 10px 20px; margin-top: 16px;"><div style="display: flex; justify-content: space-between; align-items: start;"><div><div style="font-size: 0.7rem; color: #6e7681; text-transform: uppercase;">Recommended Strategy for {ticker} @ &#36;{price:.2f}</div><div style="font-size: 1.8rem; font-weight: 700; color: #58a6ff; margin-top: 4px;">{strategy["name"]}</div><div style="font-size: 0.8rem; color: #8b949e; margin-top: 4px; font-style: italic;">{strategy["description"]}</div></div><div style="background: {risk_color}; color: #0d1117; padding: 6px 12px; border-radius: 6px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase;">{strategy.get("risk_level", "MEDIUM")} RISK</div></div><div style="display: inline-block; background: rgba(88, 166, 255, 0.2); color: #58a6ff; padding: 4px 10px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; margin-top: 10px;">Market Bias: {strategy["market_bias"].upper()}</div></div>', unsafe_allow_html=True)
+        # Header + bias badge
+        bs = strategy.get('bias_score', 0)
+        bs_label = 'BULLISH' if bs >= 2 else ('BEARISH' if bs <= -2 else 'NEUTRAL')
+        bs_color = '#3fb950' if bs >= 2 else ('#f85149' if bs <= -2 else '#d29922')
+        em = strategy.get('expected_move', {})
+        em_text = f"Expected Move: ±{em.get('pct', 0):.1f}%" if em.get('pct', 0) > 0 else ''
 
-        # Warning (if any)
+        st.markdown(f'<div style="background:linear-gradient(135deg,#161b22 0%,#0d1117 100%); border:2px solid {risk_color}; border-radius:12px 12px 0 0; padding:20px 20px 10px 20px; margin-top:16px;"><div style="display:flex; justify-content:space-between; align-items:start;"><div><div style="font-size:0.7rem; color:#6e7681; text-transform:uppercase;">Strategy for {ticker} @ &#36;{price:.2f}</div><div style="font-size:1.8rem; font-weight:700; color:#58a6ff; margin-top:4px;">{strategy["name"]}</div><div style="font-size:0.8rem; color:#8b949e; margin-top:4px; font-style:italic;">{strategy["description"]}</div></div><div style="text-align:right;"><div style="background:{risk_color}; color:#0d1117; padding:6px 12px; border-radius:6px; font-size:0.7rem; font-weight:700; text-transform:uppercase;">{strategy.get("risk_level","MEDIUM")} RISK</div><div style="background:{bs_color}22; color:{bs_color}; padding:4px 8px; border-radius:4px; font-size:0.65rem; font-weight:600; margin-top:4px;">BIAS: {bs_label} ({bs:+d})</div></div></div><div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;"><span style="background:rgba(88,166,255,0.15); color:#58a6ff; padding:4px 10px; border-radius:4px; font-size:0.7rem; font-weight:600;">{strategy["market_bias"].upper()}</span>', unsafe_allow_html=True)
+
+        # R/R and Expected Move badges
+        rr_text = strategy.get('risk_reward', '')
+        badges = ''
+        if rr_text:
+            badges += f'<span style="background:rgba(188,140,255,0.15); color:#bc8cff; padding:4px 10px; border-radius:4px; font-size:0.7rem; font-weight:600;">R/R: {_esc(str(rr_text))}</span>'
+        if em_text:
+            badges += f'<span style="background:rgba(210,153,34,0.15); color:#d29922; padding:4px 10px; border-radius:4px; font-size:0.7rem; font-weight:600;">{em_text}</span>'
+        liq = strategy.get('liquidity', 0)
+        if liq > 0:
+            liq_color = '#3fb950' if liq > 70 else ('#d29922' if liq > 40 else '#f85149')
+            liq_label = 'GOOD' if liq > 70 else ('FAIR' if liq > 40 else 'POOR')
+            badges += f'<span style="background:{liq_color}22; color:{liq_color}; padding:4px 10px; border-radius:4px; font-size:0.7rem; font-weight:600;">Liquidity: {liq_label}</span>'
+        st.markdown(f'{badges}</div></div>', unsafe_allow_html=True)
+
+        # Warning
         if 'warning' in strategy:
-            st.markdown(f'<div style="background: rgba(248, 81, 73, 0.15); border-left: 3px solid #f85149; padding: 10px; margin: 0 20px; border-radius: 4px;"><div style="font-size: 0.8rem; color: #f85149; font-weight: 600;">{strategy.get("warning", "")}</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="background:rgba(248,81,73,0.15); border-left:3px solid #f85149; padding:10px; margin:0; border-radius:4px;"><div style="font-size:0.8rem; color:#f85149; font-weight:600;">{strategy["warning"]}</div></div>', unsafe_allow_html=True)
 
-        # Strikes with real chain details
+        # Strikes with chain data
         strike_details = strategy.get('strike_details', {})
         strikes_html = ''
         for k, v in strategy['strikes'].items():
@@ -3629,35 +3671,57 @@ def _show_options_tab(ticker: str, data: dict):
                 continue
             label = k.replace("_", " ").title()
             detail = strike_details.get(k, '')
-            detail_html = f'<span style="color:#6e7681; font-size:0.65rem; margin-left:8px;">{detail}</span>' if detail else ''
-            strikes_html += f'<div style="margin:4px 0;"><span style="color:#8b949e;">{label}:</span> <span style="color:#58a6ff; font-weight:600;">&#36;{v:.2f}</span>{detail_html}</div>'
-        st.markdown(f'<div style="background:#0d1117; border:1px solid #21262d; border-radius:8px; padding:14px; margin:8px 0;"><div style="font-size:0.75rem; color:#e6edf3; font-weight:600; margin-bottom:8px;">Strikes &amp; Mechanics</div>{strikes_html}</div>', unsafe_allow_html=True)
+            if isinstance(detail, dict):
+                detail = detail.get('text', '')
+            detail_html = f'<div style="color:#6e7681; font-size:0.65rem; margin-top:1px;">{detail}</div>' if detail else ''
+            strikes_html += f'<div style="margin:6px 0; padding:6px 10px; background:#0d1117; border-radius:4px; border-left:2px solid #58a6ff;"><span style="color:#8b949e;">{label}:</span> <span style="color:#58a6ff; font-weight:700; font-size:0.9rem;">&#36;{v:.2f}</span>{detail_html}</div>'
 
-        # GEX context note
-        gex_note = strategy.get('gex_note', '')
-        if gex_note:
-            st.markdown(f'<div style="padding:8px 12px; background:rgba(210,153,34,0.1); border-left:3px solid #d29922; border-radius:4px; margin-bottom:8px;"><div style="font-size:0.7rem; color:#d29922; font-weight:600;">GEX Context</div><div style="font-size:0.75rem; color:#e6edf3; margin-top:4px;">{gex_note}</div></div>', unsafe_allow_html=True)
+        # Max profit/loss
+        mp = strategy.get('max_profit', '')
+        ml = strategy.get('max_loss', '')
+        be = strategy.get('breakeven', 0)
+        pl_html = '<div style="display:flex; gap:12px; margin-top:8px;">'
+        if mp:
+            mp_str = f'&#36;{mp:,.0f}' if isinstance(mp, (int, float)) else str(mp)
+            pl_html += f'<div style="flex:1; text-align:center; padding:6px; background:rgba(63,185,80,0.1); border-radius:4px;"><div style="font-size:0.6rem; color:#6e7681;">MAX PROFIT</div><div style="font-size:0.85rem; color:#3fb950; font-weight:700;">{mp_str}</div></div>'
+        if ml:
+            ml_str = f'&#36;{ml:,.0f}' if isinstance(ml, (int, float)) else str(ml)
+            pl_html += f'<div style="flex:1; text-align:center; padding:6px; background:rgba(248,81,73,0.1); border-radius:4px;"><div style="font-size:0.6rem; color:#6e7681;">MAX LOSS</div><div style="font-size:0.85rem; color:#f85149; font-weight:700;">{ml_str}</div></div>'
+        if be:
+            pl_html += f'<div style="flex:1; text-align:center; padding:6px; background:rgba(88,166,255,0.1); border-radius:4px;"><div style="font-size:0.6rem; color:#6e7681;">BREAKEVEN</div><div style="font-size:0.85rem; color:#58a6ff; font-weight:700;">&#36;{be:.2f}</div></div>'
+        pl_html += '</div>'
 
-        # Greeks Impact
-        st.markdown(f'<div style="padding:10px; background:rgba(188,140,255,0.1); border-left:3px solid #bc8cff; border-radius:4px; margin-bottom:8px;"><div style="font-size:0.7rem; color:#bc8cff; font-weight:600;">Greeks Impact</div><div style="font-size:0.75rem; color:#e6edf3; margin-top:4px;">{strategy["greeks_impact"]}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="background:#161b22; border:1px solid #21262d; border-radius:8px; padding:14px; margin:8px 0;"><div style="font-size:0.75rem; color:#e6edf3; font-weight:600; margin-bottom:8px;">Strikes &amp; Risk/Reward</div>{strikes_html}{pl_html}</div>', unsafe_allow_html=True)
 
-        # Pros and Cons as two columns
+        # GEX context + Greeks as two columns
+        col_gex, col_greeks = st.columns(2)
+        with col_gex:
+            gex_note = strategy.get('gex_note', '')
+            if gex_note:
+                st.markdown(f'<div style="padding:10px; background:rgba(210,153,34,0.1); border-left:3px solid #d29922; border-radius:4px; height:100%;"><div style="font-size:0.7rem; color:#d29922; font-weight:600;">GEX Context</div><div style="font-size:0.75rem; color:#e6edf3; margin-top:4px;">{gex_note}</div></div>', unsafe_allow_html=True)
+        with col_greeks:
+            st.markdown(f'<div style="padding:10px; background:rgba(188,140,255,0.1); border-left:3px solid #bc8cff; border-radius:4px; height:100%;"><div style="font-size:0.7rem; color:#bc8cff; font-weight:600;">Greeks Impact</div><div style="font-size:0.75rem; color:#e6edf3; margin-top:4px;">{strategy["greeks_impact"]}</div></div>', unsafe_allow_html=True)
+
+        # Unusual activity alert
+        unusual = strategy.get('unusual_activity', [])
+        if unusual:
+            ua_html = ''.join([f'<div style="font-size:0.75rem; color:#e6edf3; margin:3px 0;">&#x26A0; {_esc(u)}</div>' for u in unusual])
+            st.markdown(f'<div style="padding:10px; background:rgba(240,136,62,0.1); border-left:3px solid #f0883e; border-radius:4px; margin:8px 0;"><div style="font-size:0.7rem; color:#f0883e; font-weight:600;">Unusual Options Activity</div>{ua_html}</div>', unsafe_allow_html=True)
+
+        # Pros and Cons
         col_pros, col_cons = st.columns(2)
         with col_pros:
-            pros_items = ''.join([f'<div style="color: #3fb950; font-size: 0.75rem; margin: 3px 0;">+ {p}</div>' for p in strategy.get('pros', [])])
-            st.markdown(f'<div style="font-size: 0.75rem; color: #3fb950; font-weight: 600; margin-bottom: 4px;">Pros</div>{pros_items}', unsafe_allow_html=True)
+            pros_items = ''.join([f'<div style="color:#3fb950; font-size:0.75rem; margin:3px 0;">+ {p}</div>' for p in strategy.get('pros', [])])
+            st.markdown(f'<div style="font-size:0.75rem; color:#3fb950; font-weight:600; margin-bottom:4px;">Pros</div>{pros_items}', unsafe_allow_html=True)
         with col_cons:
-            cons_items = ''.join([f'<div style="color: #f85149; font-size: 0.75rem; margin: 3px 0;">- {c}</div>' for c in strategy.get('cons', [])])
-            st.markdown(f'<div style="font-size: 0.75rem; color: #f85149; font-weight: 600; margin-bottom: 4px;">Cons</div>{cons_items}', unsafe_allow_html=True)
+            cons_items = ''.join([f'<div style="color:#f85149; font-size:0.75rem; margin:3px 0;">- {c}</div>' for c in strategy.get('cons', [])])
+            st.markdown(f'<div style="font-size:0.75rem; color:#f85149; font-weight:600; margin-bottom:4px;">Cons</div>{cons_items}', unsafe_allow_html=True)
 
-        # Bias score indicator
-        bs = strategy.get('bias_score', 0)
-        bs_label = 'BULLISH' if bs >= 2 else ('BEARISH' if bs <= -2 else 'NEUTRAL')
-        bs_color = '#3fb950' if bs >= 2 else ('#f85149' if bs <= -2 else '#d29922')
-        bias_bar = f'<span style="color:{bs_color}; font-weight:700;">{bs_label} ({bs:+d})</span> = P/C + SKEW + GEX composite'
-
-        # Context footer
-        st.markdown(f'<div style="padding:8px 12px; border-top:1px solid #21262d; font-size:0.7rem; color:#6e7681; background:#161b22; border-radius:0 0 12px 12px; margin-bottom:16px;"><strong>Bias:</strong> {bias_bar}<br><strong>Context:</strong> SKEW {strategy["context"]["skew"]} | IV {strategy["context"]["avg_iv"]} | {strategy["context"]["gamma_regime"]} | P/C {strategy["context"]["pc_ratio"]} | DTE {strategy["context"]["dte"]}d</div>', unsafe_allow_html=True)
+        # Bias breakdown footer
+        reasons = strategy.get('bias_reasons', [])
+        reasons_html = ' | '.join(reasons) if reasons else 'No signals'
+        ctx = strategy['context']
+        st.markdown(f'<div style="padding:8px 12px; border-top:1px solid #21262d; font-size:0.7rem; color:#6e7681; background:#161b22; border-radius:0 0 12px 12px; margin-bottom:16px;"><strong style="color:{bs_color};">Bias {bs_label} ({bs:+d}):</strong> {reasons_html}<br><strong>Context:</strong> SKEW {ctx["skew"]} | IV {ctx["avg_iv"]} | {ctx["gamma_regime"]} | P/C {ctx["pc_ratio"]} | DTE {ctx["dte"]}d | EM {ctx.get("expected_move","N/A")}</div>', unsafe_allow_html=True)
 
     except Exception as e:
         st.warning(f"⚠️ Could not generate strategy: {str(e)}")
@@ -4877,38 +4941,40 @@ def _show_congress_tab():
                     <b>Trades de politicos en sectores de sus comites.</b>
                     </div>
                     """, unsafe_allow_html=True)
-                    ins_cols = ['politician', 'ticker', 'company', 'transaction_type', 'traded_date', 'amount_range', 'relevance_reason']
+                    ins_cols = ['politician', 'party', 'ticker', 'company', 'transaction_type', 'traded_date', 'disclosed_date', 'amount_range', 'relevance_reason']
                     ins_avail = [c for c in ins_cols if c in insider_trades.columns]
                     ins_disp = insider_trades[ins_avail].head(10).copy()
-                    if 'traded_date' in ins_disp.columns:
-                        ins_disp['traded_date'] = pd.to_datetime(ins_disp['traded_date']).dt.strftime('%Y-%m-%d')
                     ins_rows = ""
                     for _, r in ins_disp.iterrows():
                         tx = r.get('transaction_type', '')
                         tx_c = "#10B981" if 'buy' in str(tx).lower() else "#EF4444"
+                        party = r.get('party', '')
+                        pc = "#3B82F6" if party == 'D' else ("#EF4444" if party == 'R' else "#94a3b8")
+                        td_str = str(pd.to_datetime(r.get('traded_date', '')).strftime('%Y-%m-%d')) if r.get('traded_date') and str(r.get('traded_date')) != 'NaT' else '—'
+                        dd_str = str(pd.to_datetime(r.get('disclosed_date', '')).strftime('%Y-%m-%d')) if r.get('disclosed_date') and str(r.get('disclosed_date')) != 'NaT' else '—'
+                        reason = str(r.get('relevance_reason', ''))[:40]
                         ins_rows += f'''<tr>
                             <td>{r.get('politician','')}</td>
+                            <td style="color:{pc};font-weight:600;">{party}</td>
                             <td><b style="color:#60a5fa;">{r.get('ticker','')}</b></td>
                             <td style="color:#94a3b8;font-size:0.75rem;">{str(r.get('company',''))[:25]}</td>
                             <td><span style="color:{tx_c};font-weight:600;">{"COMPRA" if "buy" in str(tx).lower() else "VENTA"}</span></td>
-                            <td>{r.get('traded_date','')}</td>
+                            <td>{td_str}</td><td style="color:#8b949e;">{dd_str}</td>
                             <td>{r.get('amount_range','')}</td>
+                            <td style="color:#d29922;font-size:0.7rem;">{reason}</td>
                         </tr>'''
                     st.markdown(f'''<table class="styled-table"><thead><tr>
-                        <th>Politico</th><th>Ticker</th><th>Empresa</th><th>Tipo</th><th>Fecha</th><th>Monto</th>
+                        <th>Politico</th><th>Partido</th><th>Ticker</th><th>Empresa</th><th>Tipo</th><th>Trade Date</th><th>Disclosed</th><th>Monto</th><th>Reason</th>
                     </tr></thead><tbody>{ins_rows}</tbody></table>''', unsafe_allow_html=True)
                     st.markdown("---")
 
-            # All trades table - styled HTML
+            # All trades table with both dates, delay, and performance
             st.subheader(f"Todos los Trades ({len(filtered)})")
             display_cols = ['politician', 'party', 'chamber', 'ticker', 'company', 'transaction_type',
-                            'traded_date', 'price_change', 'excess_return', 'amount_range']
+                            'traded_date', 'disclosed_date', 'price_change', 'excess_return', 'amount_range']
             available = [c for c in display_cols if c in filtered.columns]
             disp = filtered[available].head(50).copy()
-            if 'traded_date' in disp.columns:
-                disp['traded_date'] = pd.to_datetime(disp['traded_date']).dt.strftime('%Y-%m-%d')
 
-            # Build styled HTML table
             congress_rows = ""
             for _, row in disp.iterrows():
                 pol = row.get('politician', '')
@@ -4921,7 +4987,25 @@ def _show_congress_tab():
                 tx = row.get('transaction_type', '')
                 tx_color = "#10B981" if 'buy' in str(tx).lower() else "#EF4444"
                 tx_label = f'<span style="color:{tx_color};font-weight:600;">{"COMPRA" if "buy" in str(tx).lower() else "VENTA"}</span>'
-                date = row.get('traded_date', '')
+                # Both dates
+                traded_raw = row.get('traded_date', '')
+                disclosed_raw = row.get('disclosed_date', '')
+                traded_str = str(pd.to_datetime(traded_raw).strftime('%Y-%m-%d')) if traded_raw and str(traded_raw) != 'NaT' else '—'
+                disclosed_str = str(pd.to_datetime(disclosed_raw).strftime('%Y-%m-%d')) if disclosed_raw and str(disclosed_raw) != 'NaT' else '—'
+                # Delay
+                delay_html = '—'
+                try:
+                    if traded_raw and disclosed_raw and str(traded_raw) != 'NaT' and str(disclosed_raw) != 'NaT':
+                        dd = (pd.to_datetime(disclosed_raw) - pd.to_datetime(traded_raw)).days
+                        if dd > 45:
+                            delay_html = f'<span style="color:#f85149;font-weight:600;">{dd}d</span>'
+                        elif dd > 20:
+                            delay_html = f'<span style="color:#d29922;">{dd}d</span>'
+                        else:
+                            delay_html = f'{dd}d'
+                except Exception:
+                    pass
+                # Performance
                 perf = row.get('price_change', None)
                 if pd.notna(perf) and perf is not None:
                     try:
@@ -4939,14 +5023,14 @@ def _show_congress_tab():
                 congress_rows += f'''<tr>
                     <td>{pol}</td><td>{party_label}</td><td>{chamber}</td>
                     <td><b style="color:#60a5fa;">{tk}</b></td><td style="color:#94a3b8;font-size:0.75rem;">{company}</td>
-                    <td>{tx_label}</td><td>{date}</td><td>{perf_html}</td><td>{amount}</td>
+                    <td>{tx_label}</td><td>{traded_str}</td><td style="color:#8b949e;">{disclosed_str}</td><td style="text-align:center;">{delay_html}</td><td>{perf_html}</td><td>{amount}</td>
                 </tr>'''
 
             congress_html = f'''<div style="max-height:500px; overflow-y:auto; border-radius:12px;">
             <table class="styled-table">
                 <thead><tr>
                     <th>Politico</th><th>Partido</th><th>Camara</th><th>Ticker</th><th>Empresa</th>
-                    <th>Tipo</th><th>Fecha</th><th>Perf</th><th>Monto</th>
+                    <th>Tipo</th><th>Trade Date</th><th>Disclosed</th><th>Delay</th><th>Perf</th><th>Monto</th>
                 </tr></thead>
                 <tbody>{congress_rows}</tbody>
             </table></div>'''

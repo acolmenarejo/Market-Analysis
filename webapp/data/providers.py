@@ -2498,57 +2498,95 @@ def recommend_options_strategy(price: float, skew: float, gamma_regime: str,
                                  net_gex_value: float = 0,
                                  call_wall: float = 0, put_wall: float = 0) -> dict:
     """
-    Recommend specific options strategy based on market context.
-    Uses actual options chain data for strike selection when available.
-
-    Parameters:
-    -----------
-    price : float - Current stock price
-    skew : float - 25D Risk Reversal (pp)
-    gamma_regime : str - 'POSITIVE GAMMA' or 'NEGATIVE GAMMA'
-    avg_iv : float - ATM IV percentage
-    pc_ratio : float - Put/Call ratio
-    dte : int - Days to expiration
-    trend : str - 'bullish', 'bearish', or 'neutral' (from P/C + skew)
-    calls_df : DataFrame - Actual calls chain with strike, impliedVolatility, openInterest, bid, ask
-    puts_df : DataFrame - Actual puts chain
-    net_gex_value : float - Total net GEX (positive = bullish dealer positioning)
-    call_wall : float - Call wall strike (resistance)
-    put_wall : float - Put wall strike (support)
+    Professional options strategy recommender.
+    Uses composite bias (P/C + SKEW + GEX), real chain data for strikes,
+    liquidity scoring, risk/reward, and expected move analysis.
     """
     import pandas as pd
+    import numpy as np
+
+    has_chain = calls_df is not None and not calls_df.empty and puts_df is not None and not puts_df.empty
 
     # =========================================================================
-    # COMPOSITE BIAS: combine P/C ratio, skew, AND GEX regime
+    # 1. CHAIN ANALYTICS — volume, liquidity, unusual activity
     # =========================================================================
-    # Score: positive = bullish, negative = bearish
+    unusual_calls = []
+    unusual_puts = []
+    total_call_premium = 0
+    total_put_premium = 0
+
+    if has_chain:
+        for side, df, out in [('call', calls_df, unusual_calls), ('put', puts_df, unusual_puts)]:
+            for _, r in df.iterrows():
+                vol = float(r.get('volume', 0) or 0)
+                oi = float(r.get('openInterest', 0) or 0)
+                bid = float(r.get('bid', 0) or 0)
+                ask = float(r.get('ask', 0) or 0)
+                mid = (bid + ask) / 2 if (bid + ask) > 0 else 0
+                iv = float(r.get('impliedVolatility', 0) or 0)
+                strike = float(r['strike'])
+                # Volume/OI ratio > 2 = unusual activity
+                vol_oi = vol / oi if oi > 50 else 0
+                # Premium flow = volume * mid * 100
+                prem = vol * mid * 100
+                if side == 'call':
+                    total_call_premium += prem
+                else:
+                    total_put_premium += prem
+                if vol_oi > 2 and vol > 100:
+                    out.append({'strike': strike, 'vol': int(vol), 'oi': int(oi),
+                                'vol_oi': vol_oi, 'iv': iv * 100, 'premium': prem, 'mid': mid})
+
+        unusual_calls.sort(key=lambda x: x['premium'], reverse=True)
+        unusual_puts.sort(key=lambda x: x['premium'], reverse=True)
+
+    # =========================================================================
+    # 2. COMPOSITE BIAS SCORE (weighted)
+    # =========================================================================
     bias_score = 0
+    bias_reasons = []
 
-    # P/C ratio signal
+    # P/C ratio by OI
     if pc_ratio < 0.7:
-        bias_score += 2    # Strong call demand = bullish
+        bias_score += 2; bias_reasons.append(f'P/C {pc_ratio:.2f} (strong call demand)')
     elif pc_ratio < 0.9:
-        bias_score += 1
+        bias_score += 1; bias_reasons.append(f'P/C {pc_ratio:.2f} (mild call bias)')
     elif pc_ratio > 1.3:
-        bias_score -= 2    # Strong put demand = bearish
+        bias_score -= 2; bias_reasons.append(f'P/C {pc_ratio:.2f} (strong put demand)')
     elif pc_ratio > 1.1:
-        bias_score -= 1
+        bias_score -= 1; bias_reasons.append(f'P/C {pc_ratio:.2f} (mild put bias)')
 
-    # Skew signal (high skew = put demand = bearish expectations)
+    # Skew signal
     if skew > 12:
-        bias_score -= 2
+        bias_score -= 2; bias_reasons.append(f'SKEW {skew:+.1f}pp (heavy put hedging)')
     elif skew > 8:
-        bias_score -= 1
+        bias_score -= 1; bias_reasons.append(f'SKEW {skew:+.1f}pp (elevated put demand)')
     elif skew < 3:
-        bias_score += 1
+        bias_score += 1; bias_reasons.append(f'SKEW {skew:+.1f}pp (complacent/bullish)')
 
-    # GEX regime signal (positive gamma = bullish, price pinned near highs)
+    # GEX regime
     if gamma_regime == 'POSITIVE GAMMA':
-        bias_score += 1
+        bias_score += 1; bias_reasons.append('Positive GEX (dealers dampen moves, bullish pin)')
     elif gamma_regime == 'NEGATIVE GAMMA':
-        bias_score -= 1
+        bias_score -= 1; bias_reasons.append('Negative GEX (dealers amplify moves, volatile)')
 
-    # Override trend with composite bias
+    # Premium flow imbalance
+    if total_call_premium > 0 and total_put_premium > 0:
+        flow_ratio = total_call_premium / (total_call_premium + total_put_premium)
+        if flow_ratio > 0.65:
+            bias_score += 1; bias_reasons.append(f'Call premium flow {flow_ratio:.0%} (aggressive call buying)')
+        elif flow_ratio < 0.35:
+            bias_score -= 1; bias_reasons.append(f'Put premium flow {1-flow_ratio:.0%} (aggressive put buying)')
+
+    # GEX walls: price position relative to support/resistance
+    if call_wall > 0 and put_wall > 0 and call_wall != put_wall:
+        pos_in_range = (price - put_wall) / (call_wall - put_wall) if call_wall > put_wall else 0.5
+        if pos_in_range > 0.8:
+            bias_reasons.append(f'Price near call wall ${call_wall:.0f} (resistance)')
+        elif pos_in_range < 0.2:
+            bias_reasons.append(f'Price near put wall ${put_wall:.0f} (support)')
+
+    # Determine trend from composite
     if bias_score >= 2:
         trend = 'bullish'
     elif bias_score <= -2:
@@ -2557,51 +2595,77 @@ def recommend_options_strategy(price: float, skew: float, gamma_regime: str,
         trend = 'neutral'
 
     # =========================================================================
-    # HELPERS: find real strikes from chain
+    # 3. EXPECTED MOVE from ATM straddle
     # =========================================================================
-    def _find_otm_call(pct_otm=0.02, min_oi=10):
-        """Find the best OTM call strike from actual chain."""
-        if calls_df is None or calls_df.empty:
-            return round(price * (1 + pct_otm), 2), None
-        target = price * (1 + pct_otm)
-        otm = calls_df[calls_df['strike'] >= price].copy()
-        if 'openInterest' in otm.columns:
-            otm = otm[otm['openInterest'] >= min_oi]
-        if otm.empty:
-            otm = calls_df[calls_df['strike'] >= price]
-        if otm.empty:
-            return round(target, 2), None
-        otm = otm.copy()
-        otm['dist'] = (otm['strike'] - target).abs()
-        best = otm.loc[otm['dist'].idxmin()]
-        return float(best['strike']), best
+    expected_move_pct = 0
+    expected_move_abs = 0
+    if has_chain:
+        atm_call = calls_df.iloc[(calls_df['strike'] - price).abs().argsort()[:1]]
+        atm_put = puts_df.iloc[(puts_df['strike'] - price).abs().argsort()[:1]]
+        atm_c_mid = float((atm_call['bid'].iloc[0] + atm_call['ask'].iloc[0]) / 2) if not atm_call.empty else 0
+        atm_p_mid = float((atm_put['bid'].iloc[0] + atm_put['ask'].iloc[0]) / 2) if not atm_put.empty else 0
+        straddle = atm_c_mid + atm_p_mid
+        expected_move_abs = straddle * 0.85  # ~1 SD
+        expected_move_pct = (expected_move_abs / price * 100) if price > 0 else 0
 
-    def _find_otm_put(pct_otm=0.02, min_oi=10):
-        """Find the best OTM put strike from actual chain."""
-        if puts_df is None or puts_df.empty:
-            return round(price * (1 - pct_otm), 2), None
-        target = price * (1 - pct_otm)
-        otm = puts_df[puts_df['strike'] <= price].copy()
-        if 'openInterest' in otm.columns:
-            otm = otm[otm['openInterest'] >= min_oi]
-        if otm.empty:
-            otm = puts_df[puts_df['strike'] <= price]
-        if otm.empty:
-            return round(target, 2), None
-        otm = otm.copy()
-        otm['dist'] = (otm['strike'] - target).abs()
-        best = otm.loc[otm['dist'].idxmin()]
-        return float(best['strike']), best
+    # =========================================================================
+    # 4. STRIKE SELECTION — using chain + GEX walls + liquidity
+    # =========================================================================
+    def _find_strike(df, target_price, direction='above', min_oi=10):
+        """Find best liquid strike near target. direction='above' or 'below'."""
+        if df is None or df.empty:
+            return target_price, None, 0
 
-    def _strike_info(row, side='call'):
-        """Format strike detail from chain row."""
+        if direction == 'above':
+            candidates = df[df['strike'] >= target_price].copy()
+        else:
+            candidates = df[df['strike'] <= target_price].copy()
+
+        if 'openInterest' in candidates.columns:
+            liquid = candidates[candidates['openInterest'] >= min_oi]
+            if not liquid.empty:
+                candidates = liquid
+
+        if candidates.empty:
+            return round(target_price, 2), None, 0
+
+        candidates = candidates.copy()
+        candidates['dist'] = (candidates['strike'] - target_price).abs()
+        best = candidates.loc[candidates['dist'].idxmin()]
+        strike = float(best['strike'])
+
+        # Liquidity score: bid-ask spread / mid
+        bid = float(best.get('bid', 0) or 0)
+        ask = float(best.get('ask', 0) or 0)
+        mid = (bid + ask) / 2
+        spread_pct = ((ask - bid) / mid * 100) if mid > 0 else 999
+        liq_score = max(0, min(100, 100 - spread_pct * 10))  # 0-100
+
+        return strike, best, liq_score
+
+    def _strike_detail(row):
+        """Build detail dict from chain row."""
         if row is None:
-            return ''
-        iv = row.get('impliedVolatility', 0) * 100 if row.get('impliedVolatility', 0) else 0
-        oi = int(row.get('openInterest', 0) or 0)
-        bid = row.get('bid', 0) or 0
-        ask = row.get('ask', 0) or 0
-        return f'IV:{iv:.0f}% OI:{oi:,} Bid/Ask:{bid:.2f}/{ask:.2f}'
+            return {}
+        bid = float(row.get('bid', 0) or 0)
+        ask = float(row.get('ask', 0) or 0)
+        mid = (bid + ask) / 2
+        return {
+            'iv': float(row.get('impliedVolatility', 0) or 0) * 100,
+            'oi': int(row.get('openInterest', 0) or 0),
+            'volume': int(row.get('volume', 0) or 0),
+            'bid': bid, 'ask': ask, 'mid': mid,
+            'spread_pct': ((ask - bid) / mid * 100) if mid > 0 else 0,
+            'text': f"IV:{float(row.get('impliedVolatility', 0) or 0)*100:.0f}% OI:{int(row.get('openInterest', 0) or 0):,} Vol:{int(row.get('volume', 0) or 0):,} Bid/Ask:{bid:.2f}/{ask:.2f}"
+        }
+
+    # Use GEX walls to inform strike targets
+    otm_call_target = price * 1.02
+    otm_put_target = price * 0.98
+    if call_wall > price and call_wall < price * 1.10:
+        otm_call_target = call_wall  # Sell at resistance
+    if put_wall < price and put_wall > price * 0.90:
+        otm_put_target = put_wall  # Sell at support
 
     # Market conditions
     skew_high = skew > 10
@@ -2609,154 +2673,202 @@ def recommend_options_strategy(price: float, skew: float, gamma_regime: str,
     iv_low = avg_iv < 20
 
     # =========================================================================
-    # BULLISH STRATEGIES
+    # 5. STRATEGY SELECTION + RISK/REWARD
     # =========================================================================
     if trend == 'bullish':
         if iv_high and skew_high:
-            buy_k, buy_row = _find_otm_call(0.01)
-            sell_k, sell_row = _find_otm_call(0.05)
+            # Spread to cap vega risk
+            buy_k, buy_r, buy_liq = _find_strike(calls_df, price * 1.01, 'above')
+            sell_target = call_wall if call_wall > buy_k else price * 1.06
+            sell_k, sell_r, sell_liq = _find_strike(calls_df, sell_target, 'above')
             if sell_k <= buy_k:
-                sell_k, sell_row = _find_otm_call(0.08)
+                sell_k, sell_r, sell_liq = _find_strike(calls_df, buy_k * 1.04, 'above')
+            buy_d = _strike_detail(buy_r)
+            sell_d = _strike_detail(sell_r)
+            max_loss = buy_d.get('mid', 0) - sell_d.get('mid', 0) if buy_d and sell_d else 0
+            max_profit = (sell_k - buy_k) - max_loss if sell_k > buy_k else 0
+            rr = (max_profit / max_loss) if max_loss > 0 else 0
             strategy = {
                 'name': 'BULL CALL SPREAD',
                 'market_bias': 'bullish',
-                'description': f'Buy ${buy_k:.0f} Call, Sell ${sell_k:.0f} Call — defined risk debit spread',
+                'description': f'Buy ${buy_k:.0f}C / Sell ${sell_k:.0f}C — debit spread near call wall',
                 'strikes': {'buy_call': buy_k, 'sell_call': sell_k},
-                'strike_details': {
-                    'buy_call': _strike_info(buy_row, 'call'),
-                    'sell_call': _strike_info(sell_row, 'call'),
-                },
-                'greeks_impact': 'Pos Delta, Long Vega (reduced by sold leg), Neg Theta (reduced)',
-                'pros': ['Cheaper than naked call (IV is high)', 'Defined max loss = debit paid'],
-                'cons': ['Profit capped at sold strike', 'Both legs lose to theta'],
-                'risk_level': 'low'
+                'strike_details': {k: v.get('text', '') for k, v in [('buy_call', buy_d), ('sell_call', sell_d)]},
+                'greeks_impact': 'Pos Delta, Reduced Vega (spread), Reduced Theta decay',
+                'max_profit': max_profit * 100, 'max_loss': max_loss * 100,
+                'risk_reward': f'{rr:.1f}:1',
+                'pros': [f'IV high ({avg_iv:.0f}%) — spread offsets vega risk', f'R/R ratio: {rr:.1f}:1', 'Defined max loss'],
+                'cons': [f'Profit capped at ${sell_k:.0f}', 'Needs move above ${0:.0f} to profit'.format(buy_k)],
+                'risk_level': 'low',
+                'liquidity': min(buy_liq, sell_liq),
             }
         elif iv_low:
-            buy_k, buy_row = _find_otm_call(0.01)
+            buy_k, buy_r, buy_liq = _find_strike(calls_df, price * 1.01, 'above')
+            buy_d = _strike_detail(buy_r)
+            cost = buy_d.get('mid', 0)
+            be = buy_k + cost
             strategy = {
                 'name': 'LONG CALL',
                 'market_bias': 'bullish',
-                'description': f'Buy ${buy_k:.0f} Call — IV is cheap, good entry for directional bet',
+                'description': f'Buy ${buy_k:.0f}C — IV cheap ({avg_iv:.0f}%), long vega benefits from expansion',
                 'strikes': {'buy_call': buy_k},
-                'strike_details': {'buy_call': _strike_info(buy_row, 'call')},
-                'greeks_impact': 'Pos Delta, Long Vega (benefits from IV expansion), Neg Theta',
-                'pros': [f'IV cheap ({avg_iv:.0f}%) — good entry', 'Unlimited profit potential'],
-                'cons': ['Theta decay every day', '100% loss if expires OTM'],
-                'risk_level': 'medium-high'
+                'strike_details': {'buy_call': buy_d.get('text', '')},
+                'greeks_impact': 'Pos Delta (~0.50), Long Vega, Neg Theta',
+                'max_profit': 'Unlimited', 'max_loss': cost * 100,
+                'breakeven': be,
+                'risk_reward': f'Unlimited / ${cost*100:.0f}',
+                'pros': [f'IV at {avg_iv:.0f}% — cheap entry', 'Unlimited upside', f'Breakeven: ${be:.2f}'],
+                'cons': [f'Loses ${cost*100:.0f}/contract if expires OTM', f'Theta decay: ~${cost/dte*100:.0f}/day'],
+                'risk_level': 'medium-high',
+                'liquidity': buy_liq,
             }
         else:
-            sell_k, sell_row = _find_otm_call(0.04)
+            sell_k, sell_r, sell_liq = _find_strike(calls_df, otm_call_target, 'above')
+            sell_d = _strike_detail(sell_r)
+            credit = sell_d.get('mid', 0)
             strategy = {
-                'name': 'COVERED CALL / SELL CALL SPREAD',
+                'name': 'COVERED CALL',
                 'market_bias': 'mild bullish',
-                'description': f'Sell ${sell_k:.0f} Call against stock or buy spread — collect premium',
+                'description': f'Sell ${sell_k:.0f}C — collect premium, cap upside at GEX resistance',
                 'strikes': {'sell_call': sell_k},
-                'strike_details': {'sell_call': _strike_info(sell_row, 'call')},
-                'greeks_impact': 'Pos Theta, Short Vega, Short Gamma above strike',
-                'pros': ['Theta works for you', 'Premium income'],
-                'cons': ['Capped upside', 'Requires stock or margin'],
-                'risk_level': 'medium'
+                'strike_details': {'sell_call': sell_d.get('text', '')},
+                'greeks_impact': 'Pos Theta, Short Vega, Short Gamma',
+                'max_profit': credit * 100, 'max_loss': 'Stock downside',
+                'risk_reward': f'${credit*100:.0f} credit / stock risk',
+                'pros': ['Theta income', f'Premium: ${credit*100:.0f}/contract', 'Call wall caps upside anyway'],
+                'cons': ['Caps profit above strike', 'Full downside if stock drops'],
+                'risk_level': 'medium',
+                'liquidity': sell_liq,
             }
 
-    # =========================================================================
-    # BEARISH STRATEGIES
-    # =========================================================================
     elif trend == 'bearish':
         if skew_high:
-            buy_k, buy_row = _find_otm_put(0.01)
-            sell_k, sell_row = _find_otm_put(0.06)
+            buy_k, buy_r, buy_liq = _find_strike(puts_df, price * 0.99, 'below')
+            sell_target = put_wall if put_wall < buy_k else price * 0.94
+            sell_k, sell_r, sell_liq = _find_strike(puts_df, sell_target, 'below')
             if sell_k >= buy_k:
-                sell_k, sell_row = _find_otm_put(0.10)
+                sell_k, sell_r, sell_liq = _find_strike(puts_df, buy_k * 0.94, 'below')
+            buy_d = _strike_detail(buy_r)
+            sell_d = _strike_detail(sell_r)
+            max_loss = buy_d.get('mid', 0) - sell_d.get('mid', 0) if buy_d and sell_d else 0
+            max_profit = (buy_k - sell_k) - max_loss if buy_k > sell_k else 0
+            rr = (max_profit / max_loss) if max_loss > 0 else 0
             strategy = {
                 'name': 'BEAR PUT SPREAD',
                 'market_bias': 'bearish',
-                'description': f'Buy ${buy_k:.0f} Put, Sell ${sell_k:.0f} Put — spread to offset expensive puts',
+                'description': f'Buy ${buy_k:.0f}P / Sell ${sell_k:.0f}P — spread to offset expensive puts',
                 'strikes': {'buy_put': buy_k, 'sell_put': sell_k},
-                'strike_details': {
-                    'buy_put': _strike_info(buy_row, 'put'),
-                    'sell_put': _strike_info(sell_row, 'put'),
-                },
-                'greeks_impact': 'Neg Delta, Long Vega (reduced), Neg Theta (reduced)',
-                'pros': ['Cheaper than naked put (SKEW is high)', 'Defined risk'],
-                'cons': [f'Puts overpriced (SKEW {skew:.1f}pp)', 'Profit capped at sold strike'],
+                'strike_details': {k: v.get('text', '') for k, v in [('buy_put', buy_d), ('sell_put', sell_d)]},
+                'greeks_impact': 'Neg Delta, Reduced Vega, Reduced Theta',
+                'max_profit': max_profit * 100, 'max_loss': max_loss * 100,
+                'risk_reward': f'{rr:.1f}:1',
+                'pros': [f'Spread offsets SKEW premium ({skew:.1f}pp)', f'R/R: {rr:.1f}:1', 'Defined risk'],
+                'cons': [f'Profit capped at ${sell_k:.0f}', f'Puts expensive (SKEW {skew:.1f}pp)'],
                 'risk_level': 'medium',
-                'warning': f'SKEW is {skew:.1f}pp — puts are expensive. Spread reduces cost.'
+                'liquidity': min(buy_liq, sell_liq),
+                'warning': f'SKEW {skew:.1f}pp — puts overpriced. Spread reduces cost vs naked put.'
             }
         else:
-            buy_k, buy_row = _find_otm_put(0.02)
+            buy_k, buy_r, buy_liq = _find_strike(puts_df, price * 0.98, 'below')
+            buy_d = _strike_detail(buy_r)
+            cost = buy_d.get('mid', 0)
+            be = buy_k - cost
             strategy = {
                 'name': 'LONG PUT',
                 'market_bias': 'bearish',
-                'description': f'Buy ${buy_k:.0f} Put — direct bearish bet with reasonable IV',
+                'description': f'Buy ${buy_k:.0f}P — direct bearish bet, reasonable IV',
                 'strikes': {'buy_put': buy_k},
-                'strike_details': {'buy_put': _strike_info(buy_row, 'put')},
-                'greeks_impact': 'Neg Delta, Long Vega, Neg Theta',
-                'pros': ['Large profit if price drops', 'Simple directional trade'],
-                'cons': ['Theta decay every day', '100% loss if expires OTM'],
-                'risk_level': 'medium-high'
+                'strike_details': {'buy_put': buy_d.get('text', '')},
+                'greeks_impact': 'Neg Delta (~-0.45), Long Vega, Neg Theta',
+                'max_profit': (buy_k - cost) * 100, 'max_loss': cost * 100,
+                'breakeven': be,
+                'risk_reward': f'${(buy_k - cost)*100:.0f} / ${cost*100:.0f}',
+                'pros': ['High profit if price crashes', f'Breakeven: ${be:.2f}', 'Simple directional trade'],
+                'cons': [f'Loses ${cost*100:.0f}/contract if expires OTM', f'Theta: ~${cost/dte*100:.0f}/day'],
+                'risk_level': 'medium-high',
+                'liquidity': buy_liq,
             }
 
-    # =========================================================================
-    # NEUTRAL STRATEGIES
-    # =========================================================================
-    else:
+    else:  # NEUTRAL
         if iv_high:
-            sell_call_k, sell_call_row = _find_otm_call(0.04)
-            buy_call_k, buy_call_row = _find_otm_call(0.08)
-            sell_put_k, sell_put_row = _find_otm_put(0.04)
-            buy_put_k, buy_put_row = _find_otm_put(0.08)
+            sc_k, sc_r, sc_liq = _find_strike(calls_df, otm_call_target, 'above')
+            bc_k, bc_r, bc_liq = _find_strike(calls_df, sc_k * 1.04, 'above')
+            sp_k, sp_r, sp_liq = _find_strike(puts_df, otm_put_target, 'below')
+            bp_k, bp_r, bp_liq = _find_strike(puts_df, sp_k * 0.96, 'below')
+            sc_d, bc_d, sp_d, bp_d = _strike_detail(sc_r), _strike_detail(bc_r), _strike_detail(sp_r), _strike_detail(bp_r)
+            credit = sc_d.get('mid', 0) + sp_d.get('mid', 0) - bc_d.get('mid', 0) - bp_d.get('mid', 0)
+            wing_width = max(bc_k - sc_k, sp_k - bp_k)
+            max_loss = (wing_width - credit) if wing_width > credit else wing_width
+            rr = (credit / max_loss) if max_loss > 0 else 0
             strategy = {
                 'name': 'IRON CONDOR',
                 'market_bias': 'neutral / range-bound',
-                'description': f'Sell ${sell_put_k:.0f}/${sell_call_k:.0f} strangle, buy ${buy_put_k:.0f}/${buy_call_k:.0f} wings',
-                'strikes': {
-                    'sell_call': sell_call_k, 'buy_call': buy_call_k,
-                    'sell_put': sell_put_k, 'buy_put': buy_put_k,
-                },
+                'description': f'Sell ${sp_k:.0f}P/${sc_k:.0f}C — collect premium within GEX range',
+                'strikes': {'sell_put': sp_k, 'buy_put': bp_k, 'sell_call': sc_k, 'buy_call': bc_k},
                 'strike_details': {
-                    'sell_call': _strike_info(sell_call_row, 'call'),
-                    'buy_call': _strike_info(buy_call_row, 'call'),
-                    'sell_put': _strike_info(sell_put_row, 'put'),
-                    'buy_put': _strike_info(buy_put_row, 'put'),
+                    'sell_call': sc_d.get('text', ''), 'buy_call': bc_d.get('text', ''),
+                    'sell_put': sp_d.get('text', ''), 'buy_put': bp_d.get('text', ''),
                 },
                 'greeks_impact': 'Short Vega, Pos Theta, Near-zero Delta',
-                'pros': [f'IV high ({avg_iv:.0f}%) = rich premium', 'Theta works for you daily'],
-                'cons': ['Loses on breakout', 'Max profit limited to credit received'],
-                'risk_level': 'medium'
+                'max_profit': credit * 100, 'max_loss': max_loss * 100,
+                'risk_reward': f'{rr:.2f}:1 (credit/risk)',
+                'pros': [f'IV high ({avg_iv:.0f}%) = rich premium', f'Credit: ${credit*100:.0f}/contract', 'Theta income daily'],
+                'cons': ['Loses on breakout past wings', f'Max loss: ${max_loss*100:.0f}/contract'],
+                'risk_level': 'medium',
+                'liquidity': min(sc_liq, sp_liq),
             }
         else:
-            sell_k, sell_row = _find_otm_put(0.05)
+            sell_k, sell_r, sell_liq = _find_strike(puts_df, price * 0.95, 'below')
+            sell_d = _strike_detail(sell_r)
+            credit = sell_d.get('mid', 0)
             strategy = {
                 'name': 'CASH-SECURED PUT',
                 'market_bias': 'neutral-mild bullish',
-                'description': f'Sell ${sell_k:.0f} Put — get paid to potentially buy lower',
+                'description': f'Sell ${sell_k:.0f}P — get paid to set a buy limit',
                 'strikes': {'sell_put': sell_k},
-                'strike_details': {'sell_put': _strike_info(sell_row, 'put')},
+                'strike_details': {'sell_put': sell_d.get('text', '')},
                 'greeks_impact': 'Pos Theta, Short Vega, Short Gamma',
-                'pros': ['Premium income', 'Get paid to set a buy limit'],
-                'cons': ['Full downside risk below strike', f'IV {avg_iv:.0f}% = modest premium'],
-                'risk_level': 'medium'
+                'max_profit': credit * 100, 'max_loss': (sell_k - credit) * 100,
+                'risk_reward': f'${credit*100:.0f} / ${(sell_k - credit)*100:.0f}',
+                'pros': [f'Premium: ${credit*100:.0f}/contract', 'Theta works for you', 'Effectively a limit buy order'],
+                'cons': ['Full risk below strike', f'IV {avg_iv:.0f}% = moderate premium'],
+                'risk_level': 'medium',
+                'liquidity': sell_liq,
             }
 
-    # GEX context note
+    # =========================================================================
+    # 6. GEX CONTEXT + UNUSUAL ACTIVITY
+    # =========================================================================
     gex_note = ''
     if call_wall > 0 and put_wall > 0:
-        gex_note = f'GEX range: ${put_wall:.0f} (put support) — ${call_wall:.0f} (call resistance). '
+        gex_note = f'GEX range: ${put_wall:.0f} support — ${call_wall:.0f} resistance. '
     if gamma_regime == 'POSITIVE GAMMA':
-        gex_note += 'Positive gamma = price tends to stay pinned, low vol.'
+        gex_note += 'Positive gamma: price pinned, sell premium works well.'
     elif gamma_regime == 'NEGATIVE GAMMA':
-        gex_note += 'Negative gamma = amplified moves, higher vol.'
+        gex_note += 'Negative gamma: big moves likely, long options benefit.'
 
     strategy['gex_note'] = gex_note
     strategy['bias_score'] = bias_score
+    strategy['bias_reasons'] = bias_reasons
+    strategy['expected_move'] = {'pct': expected_move_pct, 'abs': expected_move_abs}
 
-    # Add context
+    # Unusual activity alerts
+    if unusual_calls[:3] or unusual_puts[:3]:
+        activity = []
+        for u in unusual_calls[:2]:
+            activity.append(f"CALL ${u['strike']:.0f}: Vol/OI {u['vol_oi']:.1f}x ({u['vol']:,} vol vs {u['oi']:,} OI) — ${u['premium']/1000:.0f}K premium")
+        for u in unusual_puts[:2]:
+            activity.append(f"PUT ${u['strike']:.0f}: Vol/OI {u['vol_oi']:.1f}x ({u['vol']:,} vol vs {u['oi']:,} OI) — ${u['premium']/1000:.0f}K premium")
+        strategy['unusual_activity'] = activity
+
+    # Context
     strategy['context'] = {
         'skew': f'{skew:+.1f}pp',
         'avg_iv': f'{avg_iv:.0f}%',
         'gamma_regime': gamma_regime,
         'pc_ratio': f'{pc_ratio:.2f}',
-        'dte': dte
+        'dte': dte,
+        'expected_move': f'±{expected_move_pct:.1f}%' if expected_move_pct > 0 else 'N/A',
     }
 
     return strategy
