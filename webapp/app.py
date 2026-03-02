@@ -3096,17 +3096,16 @@ def _show_technical_tab(ticker: str, data: dict):
     col_tf, col_kr = st.columns([2, 1])
     with col_tf:
         # Map: label -> (period, interval)
-        # Label = periodo visible, interval = tamaño de cada vela
+        # TradingView convention: label = candle size
         timeframes = {
-            "1D": ("5d", "5m"),       # 5 dias de velas de 5 min (intraday)
-            "5D": ("1mo", "30m"),     # 1 mes de velas de 30 min
-            "1M": ("3mo", "1d"),      # 3 meses de velas diarias
-            "3M": ("6mo", "1d"),      # 6 meses de velas diarias
-            "6M": ("1y", "1d"),       # 1 año de velas diarias
-            "1Y": ("2y", "1wk"),      # 2 años de velas semanales
-            "2Y": ("5y", "1wk"),      # 5 años de velas semanales
+            "5m":  ("5d",  "5m"),     # 5 días de velas de 5 min (intraday)
+            "15m": ("10d", "15m"),    # 10 días de velas de 15 min
+            "1h":  ("1mo", "1h"),     # 1 mes de velas de 1 hora
+            "1D":  ("6mo", "1d"),     # 6 meses de velas diarias
+            "1W":  ("2y",  "1wk"),    # 2 años de velas semanales
+            "1M":  ("10y", "1mo"),    # 10 años de velas mensuales
         }
-        selected_tf = st.radio("Temporalidad", list(timeframes.keys()), index=2, horizontal=True, key="chart_tf")
+        selected_tf = st.radio("Temporalidad", list(timeframes.keys()), index=3, horizontal=True, key="chart_tf")
         chart_period, chart_interval = timeframes[selected_tf]
     with col_kr:
         konkorde_y = st.slider("Rango Y Konkorde", 10, 100, 30, 5)

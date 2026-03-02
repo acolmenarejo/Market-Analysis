@@ -84,10 +84,10 @@ def calculate_konkorde(hist: pd.DataFrame) -> Dict[str, pd.Series]:
     if hist is None or len(hist) < 20:
         return {'azul': pd.Series(), 'verde': pd.Series(), 'marron': pd.Series(), 'media': pd.Series()}
 
-    close = hist['Close']
-    high = hist['High']
-    low = hist['Low']
-    volume = hist['Volume']
+    close = hist['Close'].fillna(method='ffill')
+    high = hist['High'].fillna(method='ffill')
+    low = hist['Low'].fillna(method='ffill')
+    volume = hist['Volume'].fillna(0)
 
     # Typical price
     tp = (high + low + close) / 3
