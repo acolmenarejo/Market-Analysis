@@ -236,8 +236,12 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
         stock = yf.Ticker(ticker)
 
         # Datos de precio (with retry on rate limit)
-        hist = _yf_retry(lambda: stock.history(period=period)) or pd.DataFrame()
-        info = _yf_retry(lambda: stock.info) or {}
+        hist = _yf_retry(lambda: stock.history(period=period))
+        if hist is None:
+            hist = pd.DataFrame()
+        info = _yf_retry(lambda: stock.info)
+        if info is None:
+            info = {}
 
         # Calcular métricas técnicas básicas
         if not hist.empty:

@@ -1199,8 +1199,9 @@ def _render_economic_indicators(indicators: dict) -> str:
     return f'<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:8px; margin-bottom:20px;">{cards_html}</div>'
 
 
-def _render_ticker_strip(market_data: dict) -> str:
-    """Render horizontal ticker strip with all instruments."""
+def _render_ticker_strip(market_data: dict, futures_data: dict = None) -> str:
+    """Render horizontal ticker strip with all instruments including futures."""
+    # Original ETF tickers with sparklines
     order = ['SPY', 'QQQ', 'DIA', 'IWM', '^VIX', 'GLD', 'USO', 'BTC-USD', 'ETH-USD']
     items = []
     for ticker in order:
@@ -1226,6 +1227,48 @@ def _render_ticker_strip(market_data: dict) -> str:
             <span class="t-change" style="color:{chg_color};">{arrow}{abs(chg):.2f}%</span>
             <span class="t-spark">{spark}</span>
         </div>''')
+
+    # Add futures/rates/commodities from global futures data
+    if futures_data:
+        futures_order = [
+            ('ES=F', '📈'), ('NQ=F', '💻'), ('YM=F', '🏭'), ('RTY=F', '📊'),
+            ('^STOXX50E', '🇪🇺'), ('^GDAXI', '🇩🇪'), ('^N225', '🇯🇵'),
+            ('GC=F', '🥇'), ('SI=F', '🥈'), ('CL=F', '🛢'), ('NG=F', '🔥'), ('HG=F', '🔶'),
+            ('^TNX', '📉'), ('^TYX', '📉'), ('^FVX', '📉'), ('^IRX', '📉'),
+            ('DX-Y.NYB', '💵'), ('EURUSD=X', '💶'), ('GBPUSD=X', '💷'),
+            ('SOL-USD', '☀'),
+        ]
+        # Skip tickers already shown via ETF equivalents
+        shown_names = {d.get('name', '').lower() for d in market_data.values()}
+        for sym, emoji in futures_order:
+            if sym not in futures_data:
+                continue
+            fd = futures_data[sym]
+            # Skip if similar name already in strip
+            if any(n in fd['name'].lower() for n in ['s&p', 'nasdaq', 'dow', 'russell', 'vix', 'gold', 'bitcoin', 'ethereum'] if n in shown_names):
+                continue
+            chg = fd.get('change_pct', fd.get('change', 0))
+            chg_color = '#3fb950' if chg >= 0 else '#f85149'
+            if fd['type'] == 'rate':
+                chg_color = '#f85149' if chg >= 0 else '#3fb950'  # Rising rates = red
+            arrow = '▲' if chg >= 0 else '▼'
+            price = fd['price']
+            if fd['type'] in ('rate',):
+                price_fmt = f"{price:.2f}%"
+            elif fd['type'] in ('fx',) and price < 10:
+                price_fmt = f"{price:.4f}"
+            elif price >= 10000:
+                price_fmt = f"&#36;{price:,.0f}"
+            elif price >= 100:
+                price_fmt = f"&#36;{price:,.1f}"
+            else:
+                price_fmt = f"&#36;{price:,.2f}"
+            items.append(f'''<div class="ticker-item">
+                <span class="t-name">{emoji} {fd['name']}</span>
+                <span class="t-price">{price_fmt}</span>
+                <span class="t-change" style="color:{chg_color};">{arrow}{abs(chg):.2f}%</span>
+            </div>''')
+
     return f'<div class="ticker-strip">{"".join(items)}</div>'
 
 
@@ -1790,20 +1833,21 @@ def show_dashboard():
     """, unsafe_allow_html=True)
 
     # =========================================================================
-    # SECTION A: TICKER STRIP
+    # SECTION A: TICKER STRIP (with futures)
     # =========================================================================
     with st.spinner("Loading market data..."):
         market_data = get_market_overview_data()
+    try:
+        gf_strip = get_global_futures()
+    except Exception:
+        gf_strip = {}
     if market_data:
-        st.markdown(_render_ticker_strip(market_data), unsafe_allow_html=True)
+        st.markdown(_render_ticker_strip(market_data, gf_strip), unsafe_allow_html=True)
 
     # =========================================================================
     # GLOBAL INTELLIGENCE PANEL (worldmonitor-style)
     # =========================================================================
-    try:
-        gf = get_global_futures()
-    except Exception:
-        gf = {}
+    gf = gf_strip  # Reuse futures data from ticker strip
 
     # --- Row: Bloomberg TV (small) + Global Markets Grid + Quick Intel ---
     col_video, col_markets, col_intel = st.columns([2, 5, 3])
