@@ -2971,15 +2971,16 @@ def _show_technical_tab(ticker: str, data: dict):
     # Timeframe selector (period + interval like TradingView)
     col_tf, col_kr = st.columns([2, 1])
     with col_tf:
-        # Map: label -> (period, interval) — 1D shows intraday 5m candles, etc.
+        # Map: label -> (period, interval)
+        # Label = periodo visible, interval = tamaño de cada vela
         timeframes = {
-            "1D": ("1d", "5m"),
-            "5D": ("5d", "15m"),
-            "1M": ("1mo", "1h"),
-            "3M": ("3mo", "1d"),
-            "6M": ("6mo", "1d"),
-            "1Y": ("1y", "1d"),
-            "2Y": ("2y", "1wk"),
+            "1D": ("5d", "5m"),       # 5 dias de velas de 5 min (intraday)
+            "5D": ("1mo", "30m"),     # 1 mes de velas de 30 min
+            "1M": ("3mo", "1d"),      # 3 meses de velas diarias
+            "3M": ("6mo", "1d"),      # 6 meses de velas diarias
+            "6M": ("1y", "1d"),       # 1 año de velas diarias
+            "1Y": ("2y", "1wk"),      # 2 años de velas semanales
+            "2Y": ("5y", "1wk"),      # 5 años de velas semanales
         }
         selected_tf = st.radio("Temporalidad", list(timeframes.keys()), index=2, horizontal=True, key="chart_tf")
         chart_period, chart_interval = timeframes[selected_tf]
@@ -3011,7 +3012,12 @@ def _show_technical_tab(ticker: str, data: dict):
             # Handle both 'Date' and 'Datetime' index names
             _time_col = _df.columns[0]
             _df = _df.rename(columns={_time_col: 'time', 'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'})
-            _df['time'] = pd.to_datetime(_df['time']).dt.strftime('%Y-%m-%d %H:%M' if chart_interval in ('5m','15m','1h') else '%Y-%m-%d')
+
+            # Drop rows with NaN OHLC (critical - lightweight-charts crashes on null)
+            _df = _df.dropna(subset=['open', 'high', 'low', 'close'])
+
+            # Format timestamps: lightweight-charts needs epoch seconds (int) for proper handling
+            _df['time'] = pd.to_datetime(_df['time']).astype('int64') // 10**9  # Unix epoch seconds
 
             # SMA + Bollinger Bands
             _df['sma20'] = _df['close'].rolling(20).mean()
@@ -3025,37 +3031,45 @@ def _show_technical_tab(ticker: str, data: dict):
             COLOR_BULL = 'rgba(63,185,80,0.9)'
             COLOR_BEAR = 'rgba(248,81,73,0.9)'
 
+            # Helper: convert df to records, replacing NaN with 0
+            def _to_records(df):
+                return _json.loads(df.fillna(0).to_json(orient='records'))
+
             # Convert to JSON records
-            _candles = _json.loads(_df[['time','open','high','low','close']].to_json(orient='records'))
-            _vol_df = _df[['time','volume','color']].rename(columns={'volume': 'value'})
-            _volume = _json.loads(_vol_df.to_json(orient='records'))
+            _candles = _to_records(_df[['time','open','high','low','close']])
 
-            _sma20_data = _json.loads(_df[['time','sma20']].dropna().rename(columns={'sma20':'value'}).to_json(orient='records'))
-            _bb_upper_data = _json.loads(_df[['time','bb_upper']].dropna().rename(columns={'bb_upper':'value'}).to_json(orient='records'))
-            _bb_lower_data = _json.loads(_df[['time','bb_lower']].dropna().rename(columns={'bb_lower':'value'}).to_json(orient='records'))
+            _sma20_data = _to_records(_df[['time','sma20']].dropna().rename(columns={'sma20':'value'}))
+            _bb_upper_data = _to_records(_df[['time','bb_upper']].dropna().rename(columns={'bb_upper':'value'}))
+            _bb_lower_data = _to_records(_df[['time','bb_lower']].dropna().rename(columns={'bb_lower':'value'}))
 
-            # Konkorde data
+            # Konkorde data - fill NaN with 0 to prevent null crashes
             _k_df = _df[['time']].copy()
-            _k_df['verde'] = konkorde['verde'].values[:len(_k_df)] if not konkorde['verde'].empty else 0
-            _k_df['azul'] = konkorde['azul'].values[:len(_k_df)] if not konkorde['azul'].empty else 0
-            _k_df['marron'] = konkorde['marron'].values[:len(_k_df)] if not konkorde['marron'].empty else 0
-            _k_df['media'] = konkorde['media'].values[:len(_k_df)] if not konkorde['media'].empty else 0
+            _k_verde_vals = konkorde['verde'].values[:len(_k_df)] if not konkorde['verde'].empty else np.zeros(len(_k_df))
+            _k_azul_vals = konkorde['azul'].values[:len(_k_df)] if not konkorde['azul'].empty else np.zeros(len(_k_df))
+            _k_marron_vals = konkorde['marron'].values[:len(_k_df)] if not konkorde['marron'].empty else np.zeros(len(_k_df))
+            _k_media_vals = konkorde['media'].values[:len(_k_df)] if not konkorde['media'].empty else np.zeros(len(_k_df))
+
+            # Replace NaN in konkorde arrays
+            _k_df['verde'] = np.nan_to_num(_k_verde_vals, nan=0.0)
+            _k_df['azul'] = np.nan_to_num(_k_azul_vals, nan=0.0)
+            _k_df['marron'] = np.nan_to_num(_k_marron_vals, nan=0.0)
+            _k_df['media'] = np.nan_to_num(_k_media_vals, nan=0.0)
 
             # Colors for konkorde histograms
             _k_verde = _k_df[['time','verde']].rename(columns={'verde':'value'}).copy()
             _k_verde['color'] = np.where(_k_verde['value'] >= 0, 'rgba(63,185,80,0.5)', 'rgba(63,185,80,0.2)')
             _k_azul = _k_df[['time','azul']].rename(columns={'azul':'value'}).copy()
             _k_azul['color'] = np.where(_k_azul['value'] >= 0, 'rgba(88,166,255,0.5)', 'rgba(88,166,255,0.2)')
-            _k_marron = _json.loads(_k_df[['time','marron']].rename(columns={'marron':'value'}).to_json(orient='records'))
-            _k_media = _json.loads(_k_df[['time','media']].rename(columns={'media':'value'}).to_json(orient='records'))
+            _k_marron = _to_records(_k_df[['time','marron']].rename(columns={'marron':'value'}))
+            _k_media = _to_records(_k_df[['time','media']].rename(columns={'media':'value'}))
 
-            _k_verde_json = _json.loads(_k_verde.to_json(orient='records'))
-            _k_azul_json = _json.loads(_k_azul.to_json(orient='records'))
+            _k_verde_json = _to_records(_k_verde)
+            _k_azul_json = _to_records(_k_azul)
 
-            # Volume bar data for volume pane
-            _vol_bar = _df[['time','volume']].rename(columns={'volume':'value'}).copy()
+            # Volume bar data for volume pane - fill NaN volume with 0
+            _vol_bar = _df[['time','volume']].fillna(0).rename(columns={'volume':'value'}).copy()
             _vol_bar['color'] = _df['color']
-            _vol_bar_json = _json.loads(_vol_bar.to_json(orient='records'))
+            _vol_bar_json = _to_records(_vol_bar)
 
             # Chart layout config (TradingView dark theme)
             _base_layout = {
