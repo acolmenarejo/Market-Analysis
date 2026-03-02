@@ -3592,21 +3592,23 @@ def _show_options_tab(ticker: str, data: dict):
         # Use pc_ratio_oi as the primary put/call ratio
         pc_ratio = pc_ratio_oi if 'pc_ratio_oi' in dir() else 0
 
-        # Determine trend
-        if pc_ratio < 0.8 and skew < 8:
-            trend = 'bullish'
-        elif pc_ratio > 1.2 or skew > 12:
-            trend = 'bearish'
-        else:
-            trend = 'neutral'
-
-        # Get recommendation
+        # Get GEX context
         rec_skew = rr_data['rr_25d'] if 'rr_data' in locals() and rr_data else skew
         rec_regime = regime if '_gex_computed' in locals() and _gex_computed else 'N/A'
+        rec_net_gex = total_net_gex if '_gex_computed' in locals() and _gex_computed else 0
+        rec_call_wall = call_wall if '_gex_computed' in locals() and _gex_computed else 0
+        rec_put_wall = put_wall if '_gex_computed' in locals() and _gex_computed else 0
+
+        # Pass actual chain data for real strike selection
+        rec_calls = calls if 'calls' in locals() else None
+        rec_puts = puts if 'puts' in locals() else None
 
         strategy = recommend_options_strategy(
             price=price, skew=rec_skew, gamma_regime=rec_regime,
-            avg_iv=avg_iv, pc_ratio=pc_ratio, dte=dte, trend=trend
+            avg_iv=avg_iv, pc_ratio=pc_ratio, dte=dte,
+            calls_df=rec_calls, puts_df=rec_puts,
+            net_gex_value=rec_net_gex,
+            call_wall=rec_call_wall, put_wall=rec_put_wall
         )
 
         # Display card - split into smaller st.markdown calls to avoid Streamlit HTML parsing issues
@@ -3619,13 +3621,25 @@ def _show_options_tab(ticker: str, data: dict):
         if 'warning' in strategy:
             st.markdown(f'<div style="background: rgba(248, 81, 73, 0.15); border-left: 3px solid #f85149; padding: 10px; margin: 0 20px; border-radius: 4px;"><div style="font-size: 0.8rem; color: #f85149; font-weight: 600;">{strategy.get("warning", "")}</div></div>', unsafe_allow_html=True)
 
-        # Strikes
-        strikes_lines = ''.join([f'<span style="color: #8b949e;">{k.replace("_", " ").title()}:</span> <span style="color: #58a6ff; font-weight: 600;">&#36;{v:.2f}</span> &nbsp; '
-                                if isinstance(v, (int, float)) else '' for k, v in strategy['strikes'].items()])
-        st.markdown(f'<div style="background: #0d1117; border: 1px solid #21262d; border-radius: 8px; padding: 14px; margin: 8px 0;"><div style="font-size: 0.75rem; color: #e6edf3; font-weight: 600; margin-bottom: 8px;">Strikes &amp; Mechanics</div><div style="font-size: 0.75rem;">{strikes_lines}</div></div>', unsafe_allow_html=True)
+        # Strikes with real chain details
+        strike_details = strategy.get('strike_details', {})
+        strikes_html = ''
+        for k, v in strategy['strikes'].items():
+            if not isinstance(v, (int, float)):
+                continue
+            label = k.replace("_", " ").title()
+            detail = strike_details.get(k, '')
+            detail_html = f'<span style="color:#6e7681; font-size:0.65rem; margin-left:8px;">{detail}</span>' if detail else ''
+            strikes_html += f'<div style="margin:4px 0;"><span style="color:#8b949e;">{label}:</span> <span style="color:#58a6ff; font-weight:600;">&#36;{v:.2f}</span>{detail_html}</div>'
+        st.markdown(f'<div style="background:#0d1117; border:1px solid #21262d; border-radius:8px; padding:14px; margin:8px 0;"><div style="font-size:0.75rem; color:#e6edf3; font-weight:600; margin-bottom:8px;">Strikes &amp; Mechanics</div>{strikes_html}</div>', unsafe_allow_html=True)
+
+        # GEX context note
+        gex_note = strategy.get('gex_note', '')
+        if gex_note:
+            st.markdown(f'<div style="padding:8px 12px; background:rgba(210,153,34,0.1); border-left:3px solid #d29922; border-radius:4px; margin-bottom:8px;"><div style="font-size:0.7rem; color:#d29922; font-weight:600;">GEX Context</div><div style="font-size:0.75rem; color:#e6edf3; margin-top:4px;">{gex_note}</div></div>', unsafe_allow_html=True)
 
         # Greeks Impact
-        st.markdown(f'<div style="padding: 10px; background: rgba(188, 140, 255, 0.1); border-left: 3px solid #bc8cff; border-radius: 4px; margin-bottom: 8px;"><div style="font-size: 0.7rem; color: #bc8cff; font-weight: 600;">Greeks Impact</div><div style="font-size: 0.75rem; color: #e6edf3; margin-top: 4px;">{strategy["greeks_impact"]}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="padding:10px; background:rgba(188,140,255,0.1); border-left:3px solid #bc8cff; border-radius:4px; margin-bottom:8px;"><div style="font-size:0.7rem; color:#bc8cff; font-weight:600;">Greeks Impact</div><div style="font-size:0.75rem; color:#e6edf3; margin-top:4px;">{strategy["greeks_impact"]}</div></div>', unsafe_allow_html=True)
 
         # Pros and Cons as two columns
         col_pros, col_cons = st.columns(2)
@@ -3636,8 +3650,14 @@ def _show_options_tab(ticker: str, data: dict):
             cons_items = ''.join([f'<div style="color: #f85149; font-size: 0.75rem; margin: 3px 0;">- {c}</div>' for c in strategy.get('cons', [])])
             st.markdown(f'<div style="font-size: 0.75rem; color: #f85149; font-weight: 600; margin-bottom: 4px;">Cons</div>{cons_items}', unsafe_allow_html=True)
 
+        # Bias score indicator
+        bs = strategy.get('bias_score', 0)
+        bs_label = 'BULLISH' if bs >= 2 else ('BEARISH' if bs <= -2 else 'NEUTRAL')
+        bs_color = '#3fb950' if bs >= 2 else ('#f85149' if bs <= -2 else '#d29922')
+        bias_bar = f'<span style="color:{bs_color}; font-weight:700;">{bs_label} ({bs:+d})</span> = P/C + SKEW + GEX composite'
+
         # Context footer
-        st.markdown(f'<div style="padding: 8px 12px; border-top: 1px solid #21262d; font-size: 0.7rem; color: #6e7681; background: #161b22; border-radius: 0 0 12px 12px; margin-bottom: 16px;"><strong>Context:</strong> SKEW {strategy["context"]["skew"]} | IV {strategy["context"]["avg_iv"]} | {strategy["context"]["gamma_regime"]} | P/C {strategy["context"]["pc_ratio"]} | DTE {strategy["context"]["dte"]}d</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="padding:8px 12px; border-top:1px solid #21262d; font-size:0.7rem; color:#6e7681; background:#161b22; border-radius:0 0 12px 12px; margin-bottom:16px;"><strong>Bias:</strong> {bias_bar}<br><strong>Context:</strong> SKEW {strategy["context"]["skew"]} | IV {strategy["context"]["avg_iv"]} | {strategy["context"]["gamma_regime"]} | P/C {strategy["context"]["pc_ratio"]} | DTE {strategy["context"]["dte"]}d</div>', unsafe_allow_html=True)
 
     except Exception as e:
         st.warning(f"⚠️ Could not generate strategy: {str(e)}")
