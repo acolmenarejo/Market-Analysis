@@ -1863,37 +1863,45 @@ def show_dashboard():
         st.video("https://www.youtube.com/watch?v=iEpJwprxDdk", autoplay=True, muted=True)
 
     with col_markets:
-        # Global Markets Grid — 6 columns, worldmonitor style with all asset classes
-        market_groups = [
-            ('US INDICES', [
-                ('^GSPC', 'S&P 500', '#58a6ff'), ('^IXIC', 'Nasdaq', '#bc8cff'),
-                ('^DJI', 'Dow', '#3fb950'), ('^RUT', 'Russell', '#d29922'),
-            ]),
-            ('EU / ASIA', [
-                ('^STOXX50E', 'EuroStoxx', '#bc8cff'), ('^GDAXI', 'DAX', '#58a6ff'),
-                ('^FTSE', 'FTSE', '#3fb950'), ('^N225', 'Nikkei', '#d29922'),
-            ]),
-            ('COMMODITIES', [
-                ('GC=F', 'Gold', '#d29922'), ('SI=F', 'Silver', '#8b949e'),
-                ('CL=F', 'WTI Oil', '#f0883e'), ('NG=F', 'Nat Gas', '#39d2c0'),
-                ('HG=F', 'Copper', '#bc8cff'),
-            ]),
-            ('RATES', [
-                ('^IRX', '3M T-Bill', '#8b949e'), ('^FVX', '5Y Yield', '#d29922'),
-                ('^TNX', '10Y Yield', '#58a6ff'), ('^TYX', '30Y Yield', '#bc8cff'),
-            ]),
-            ('FX & VOL', [
-                ('DX-Y.NYB', 'DXY', '#3fb950'), ('EURUSD=X', 'EUR/USD', '#d29922'),
-                ('GBPUSD=X', 'GBP/USD', '#58a6ff'), ('^VIX', 'VIX', '#f85149'),
-            ]),
-            ('CRYPTO', [
-                ('BTC-USD', 'Bitcoin', '#f0883e'), ('ETH-USD', 'Ethereum', '#bc8cff'),
-                ('SOL-USD', 'Solana', '#39d2c0'),
-            ]),
+        # Global Markets Table — Spot (C) vs Futures (F) side by side
+        # Each row: Asset | Spot price + chg | Futures price + chg
+        market_table_rows = [
+            # (label, spot_sym, futures_sym, color)
+            ('S&P 500',     '^GSPC',    'ES=F',    '#58a6ff'),
+            ('Nasdaq',      '^IXIC',    'NQ=F',    '#bc8cff'),
+            ('Dow Jones',   '^DJI',     'YM=F',    '#3fb950'),
+            ('Russell 2000','^RUT',     'RTY=F',   '#d29922'),
+            ('EuroStoxx 50','^STOXX50E', None,     '#bc8cff'),
+            ('DAX',         '^GDAXI',   None,      '#58a6ff'),
+            ('FTSE 100',    '^FTSE',    None,       '#3fb950'),
+            ('Nikkei 225',  '^N225',    None,       '#d29922'),
+            ('Gold',        'GC=F',     None,       '#d29922'),
+            ('Silver',      'SI=F',     None,       '#8b949e'),
+            ('WTI Oil',     'CL=F',     'BZ=F',    '#f0883e'),
+            ('Nat Gas',     'NG=F',     None,       '#39d2c0'),
+            ('Copper',      'HG=F',     None,       '#bc8cff'),
+            ('10Y Bond',    '^TNX',     'ZN=F',    '#58a6ff'),
+            ('30Y Bond',    '^TYX',     'ZB=F',    '#bc8cff'),
+            ('5Y Yield',    '^FVX',     None,       '#d29922'),
+            ('3M T-Bill',   '^IRX',     None,       '#8b949e'),
+            ('DXY',         'DX-Y.NYB', None,       '#3fb950'),
+            ('EUR/USD',     'EURUSD=X', None,       '#d29922'),
+            ('GBP/USD',     'GBPUSD=X', None,       '#58a6ff'),
+            ('USD/JPY',     'JPY=X',    None,       '#f0883e'),
+            ('VIX',         '^VIX',     None,       '#f85149'),
+            ('Bitcoin',     'BTC-USD',  None,       '#f0883e'),
+            ('Ethereum',    'ETH-USD',  None,       '#bc8cff'),
+            ('Solana',      'SOL-USD',  None,       '#39d2c0'),
         ]
 
-        # Helper to format price based on instrument type
-        def _fmt_price(sym, price):
+        # Label for second column based on asset
+        _fut_labels = {
+            'ES=F': 'Fut', 'NQ=F': 'Fut', 'YM=F': 'Fut', 'RTY=F': 'Fut',
+            'BZ=F': 'Brent', 'ZN=F': 'Fut', 'ZB=F': 'Fut',
+        }
+
+        def _fmt_p(sym, price):
+            """Format price based on instrument type."""
             typ = gf.get(sym, {}).get('type', '')
             if typ in ('rate',):
                 return f'{price:.2f}%'
@@ -1905,27 +1913,79 @@ def show_dashboard():
                 return f'&#36;{price:,.1f}'
             return f'&#36;{price:,.2f}'
 
+        def _chg_html(chg, sym=''):
+            """Format change % with color and arrow."""
+            is_rate = gf.get(sym, {}).get('type', '') == 'rate'
+            is_vix = 'VIX' in sym
+            if is_rate or is_vix:
+                c = '#f85149' if chg >= 0 else '#3fb950'
+            else:
+                c = '#3fb950' if chg >= 0 else '#f85149'
+            a = '▲' if chg >= 0 else '▼'
+            s = '+' if chg >= 0 else ''
+            return f'<span style="font-size:0.5rem; color:{c}; font-weight:600;">{a}{s}{chg:.2f}%</span>'
+
+        # Group rows by category for visual separation
+        _categories = [
+            ('US INDICES', 0, 4), ('EU / ASIA', 4, 8), ('COMMODITIES', 8, 13),
+            ('RATES', 13, 17), ('FX & VOL', 17, 22), ('CRYPTO', 22, 25),
+        ]
+
         grid_html = '<div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:4px;">'
-        for group_name, items in market_groups:
-            grid_html += f'''<div style="background:#161b22; border:1px solid #21262d; border-radius:6px; padding:4px 6px;">
-                <div style="font-size:0.5rem; text-transform:uppercase; letter-spacing:0.8px; color:#6e7681; font-weight:600; margin-bottom:4px; border-bottom:1px solid #21262d; padding-bottom:2px;">{group_name}</div>'''
-            for sym, label, color in items:
-                d = gf.get(sym, {})
-                price = d.get('price', 0)
-                chg = d.get('change', 0)
-                if price == 0:
-                    continue
-                chg_color = '#3fb950' if chg >= 0 else '#f85149'
-                sign = '+' if chg >= 0 else ''
-                arrow = '▲' if chg >= 0 else '▼'
-                p_str = _fmt_price(sym, price)
-                grid_html += f'''<div style="display:flex; justify-content:space-between; align-items:center; padding:2px 0; border-bottom:1px solid #1c2333;">
-                    <span style="font-size:0.6rem; color:{color}; font-weight:600;">{label}</span>
-                    <div style="text-align:right;">
-                        <span style="font-size:0.65rem; color:#e6edf3; font-weight:700;">{p_str}</span>
-                        <span style="font-size:0.52rem; color:{chg_color}; font-weight:600; margin-left:3px;">{arrow}{sign}{chg:.2f}%</span>
+        for cat_name, start, end in _categories:
+            rows = market_table_rows[start:end]
+            # Check if any row in this category has a futures counterpart
+            has_futures = any(r[2] is not None and r[2] in gf for r in rows)
+
+            grid_html += f'<div style="background:#161b22; border:1px solid #21262d; border-radius:6px; padding:4px 6px;">'
+            # Header with column labels
+            if has_futures:
+                grid_html += f'''<div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #21262d; padding-bottom:2px; margin-bottom:3px;">
+                    <span style="font-size:0.5rem; text-transform:uppercase; letter-spacing:0.8px; color:#6e7681; font-weight:600;">{cat_name}</span>
+                    <div style="display:flex; gap:8px;">
+                        <span style="font-size:0.45rem; color:#58a6ff; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;">Spot</span>
+                        <span style="font-size:0.45rem; color:#d29922; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;">Futures</span>
                     </div>
                 </div>'''
+            else:
+                grid_html += f'<div style="font-size:0.5rem; text-transform:uppercase; letter-spacing:0.8px; color:#6e7681; font-weight:600; margin-bottom:3px; border-bottom:1px solid #21262d; padding-bottom:2px;">{cat_name}</div>'
+
+            for label, spot_sym, fut_sym, color in rows:
+                sd = gf.get(spot_sym, {})
+                sp = sd.get('price', 0)
+                sc = sd.get('change', 0)
+                if sp == 0:
+                    continue
+
+                if fut_sym and fut_sym in gf:
+                    fd = gf[fut_sym]
+                    fp = fd.get('price', 0)
+                    fc = fd.get('change', 0)
+                    fl = _fut_labels.get(fut_sym, 'Fut')
+                    grid_html += f'''<div style="display:flex; justify-content:space-between; align-items:center; padding:2px 0; border-bottom:1px solid #1c2333;">
+                        <span style="font-size:0.6rem; color:{color}; font-weight:600; min-width:60px;">{label}</span>
+                        <div style="display:flex; gap:6px; align-items:center;">
+                            <div style="text-align:right; border-right:1px solid #30363d; padding-right:6px;">
+                                <span style="font-size:0.45rem; color:#58a6ff; font-weight:600;">C</span>
+                                <span style="font-size:0.6rem; color:#e6edf3; font-weight:700; margin-left:2px;">{_fmt_p(spot_sym, sp)}</span>
+                                {_chg_html(sc, spot_sym)}
+                            </div>
+                            <div style="text-align:right;">
+                                <span style="font-size:0.45rem; color:#d29922; font-weight:600;">{fl[0]}</span>
+                                <span style="font-size:0.6rem; color:#e6edf3; font-weight:700; margin-left:2px;">{_fmt_p(fut_sym, fp)}</span>
+                                {_chg_html(fc, fut_sym)}
+                            </div>
+                        </div>
+                    </div>'''
+                else:
+                    grid_html += f'''<div style="display:flex; justify-content:space-between; align-items:center; padding:2px 0; border-bottom:1px solid #1c2333;">
+                        <span style="font-size:0.6rem; color:{color}; font-weight:600;">{label}</span>
+                        <div style="text-align:right;">
+                            <span style="font-size:0.65rem; color:#e6edf3; font-weight:700;">{_fmt_p(spot_sym, sp)}</span>
+                            {_chg_html(sc, spot_sym)}
+                        </div>
+                    </div>'''
+
             grid_html += '</div>'
         grid_html += '</div>'
         st.markdown(grid_html, unsafe_allow_html=True)
