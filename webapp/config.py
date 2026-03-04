@@ -47,35 +47,91 @@ DB_PATH = DATA_DIR / 'congress_unified.db'
 # Días de histórico a mantener
 DEFAULT_HISTORY_DAYS = 90
 
-# Universo de tickers a analizar (expandido)
-TICKER_UNIVERSE = [
-    # Big Tech
-    'AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN', 'NVDA', 'TSLA', 'NFLX',
-    # Semiconductores
-    'AVGO', 'AMD', 'INTC', 'QCOM', 'MU', 'ASML', 'TSM', 'AMAT', 'LRCX', 'MRVL',
-    # Software
-    'CRM', 'ORCL', 'IBM', 'NOW', 'ADBE', 'PLTR', 'SNOW', 'DDOG', 'ZS', 'CRWD',
-    # Fintech
-    'V', 'MA', 'PYPL', 'SQ', 'COIN', 'HOOD',
-    # Banks
-    'JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'SCHW', 'BLK',
-    # Healthcare
-    'UNH', 'JNJ', 'PFE', 'MRK', 'ABBV', 'LLY', 'GILD', 'BMY', 'AMGN', 'REGN', 'MRNA', 'VRTX',
-    # Consumer
-    'PG', 'KO', 'PEP', 'WMT', 'COST', 'HD', 'MCD', 'NKE', 'SBUX', 'TGT', 'LOW',
-    # Energy
-    'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'OXY',
-    # Defense
-    'LMT', 'RTX', 'NOC', 'GD', 'BA', 'HII',
-    # Industrials
-    'CAT', 'DE', 'UNP', 'UPS', 'FDX', 'HON',
-    # Telecom/Media
-    'VZ', 'T', 'TMUS', 'DIS', 'CMCSA', 'CHTR',
-    # REITs / Utilities
-    'AMT', 'PLD', 'NEE', 'DUK', 'SO',
-    # Other high-volume
-    'UBER', 'ABNB', 'SHOP', 'SQ', 'SPOT',
-]
+# Universo de tickers por región
+TICKER_UNIVERSE_BY_REGION = {
+    'US': [
+        # Big Tech
+        'AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN', 'NVDA', 'TSLA', 'NFLX',
+        # Semiconductores
+        'AVGO', 'AMD', 'INTC', 'QCOM', 'MU', 'TSM', 'AMAT', 'LRCX', 'MRVL', 'ARM', 'SMCI',
+        # Software / Cloud
+        'CRM', 'ORCL', 'IBM', 'NOW', 'ADBE', 'PLTR', 'SNOW', 'DDOG', 'ZS', 'CRWD',
+        'PANW', 'NET', 'TTD', 'HUBS', 'WDAY', 'TEAM', 'ZM', 'DOCU',
+        # Fintech
+        'V', 'MA', 'PYPL', 'SQ', 'COIN', 'HOOD', 'SOFI', 'AFRM', 'UPST',
+        # Banks
+        'JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'SCHW', 'BLK',
+        # Healthcare / Biotech
+        'UNH', 'JNJ', 'PFE', 'MRK', 'ABBV', 'LLY', 'GILD', 'BMY', 'AMGN', 'REGN', 'MRNA', 'VRTX',
+        # Consumer
+        'PG', 'KO', 'PEP', 'WMT', 'COST', 'HD', 'MCD', 'NKE', 'SBUX', 'TGT', 'LOW',
+        # Energy
+        'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'OXY',
+        # Defense / Aerospace
+        'LMT', 'RTX', 'NOC', 'GD', 'BA', 'HII',
+        # Industrials
+        'CAT', 'DE', 'UNP', 'UPS', 'FDX', 'HON',
+        # Telecom / Media
+        'VZ', 'T', 'TMUS', 'DIS', 'CMCSA', 'CHTR',
+        # REITs / Utilities
+        'AMT', 'PLD', 'NEE', 'DUK', 'SO',
+        # Growth / High-volume
+        'UBER', 'ABNB', 'SHOP', 'SPOT', 'RBLX', 'SNAP', 'PINS', 'ROKU',
+        'RIVN', 'LCID', 'MELI', 'SE', 'GRAB',
+    ],
+    'Europe': [
+        # UK (.L) — FTSE blue chips
+        'SHEL.L', 'AZN.L', 'HSBA.L', 'ULVR.L', 'BP.L', 'GSK.L', 'RIO.L',
+        'LSEG.L', 'DGE.L', 'REL.L', 'BARC.L', 'LLOY.L',
+        # Germany (.DE) — DAX
+        'SAP.DE', 'SIE.DE', 'ALV.DE', 'DTE.DE', 'AIR.DE', 'BAS.DE',
+        'MBG.DE', 'BMW.DE', 'MUV2.DE', 'IFX.DE', 'ADS.DE',
+        # France (.PA) — CAC 40
+        'MC.PA', 'OR.PA', 'TTE.PA', 'SAN.PA', 'AI.PA', 'SU.PA',
+        'BN.PA', 'CS.PA', 'KER.PA', 'EL.PA',
+        # Spain (.MC)
+        'ITX.MC', 'SAN.MC', 'IBE.MC', 'TEF.MC', 'BBVA.MC',
+        # Netherlands (.AS)
+        'ASML.AS', 'PHIA.AS', 'UNA.AS', 'INGA.AS',
+        # Switzerland (.SW)
+        'NESN.SW', 'ROG.SW', 'NOVN.SW', 'UBSG.SW',
+        # Italy (.MI)
+        'ENI.MI', 'ISP.MI', 'UCG.MI',
+    ],
+    'Asia': [
+        # Japan (.T)
+        '7203.T', '6758.T', '6861.T', '8306.T', '9984.T', '6902.T', '7267.T', '4063.T',
+        # Hong Kong (.HK)
+        '0700.HK', '9988.HK', '1299.HK', '0005.HK', '3690.HK', '9999.HK', '2318.HK',
+        # China (.SS)
+        '600519.SS', '601318.SS', '600036.SS',
+        # Korea (.KS)
+        '005930.KS', '000660.KS', '035420.KS',
+        # India (.NS)
+        'RELIANCE.NS', 'TCS.NS', 'INFY.NS', 'HDFCBANK.NS', 'ICICIBANK.NS',
+        # Australia (.AX)
+        'BHP.AX', 'CBA.AX', 'CSL.AX', 'WDS.AX',
+    ],
+    'LatAm': [
+        # Brazil (.SA)
+        'VALE3.SA', 'PETR4.SA', 'ITUB4.SA', 'BBDC4.SA', 'ABEV3.SA', 'WEGE3.SA',
+        # Mexico (.MX)
+        'AMXL.MX', 'FEMSAUBD.MX', 'WALMEX.MX',
+        # Argentina (US-listed ADRs)
+        'YPF', 'GGAL', 'MELI',
+    ],
+}
+
+# Backward-compatible flat list (deduplicated)
+TICKER_UNIVERSE = list(dict.fromkeys(
+    t for region in TICKER_UNIVERSE_BY_REGION.values() for t in region
+))
+
+# Ticker → Region mapping for filtering
+REGION_MAP = {}
+for _region, _tickers in TICKER_UNIVERSE_BY_REGION.items():
+    for _t in _tickers:
+        REGION_MAP[_t] = _region
 
 # Políticos de alto rendimiento a trackear
 HIGH_PROFILE_POLITICIANS = [

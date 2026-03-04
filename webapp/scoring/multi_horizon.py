@@ -59,22 +59,25 @@ class MultiHorizonResult:
 # =============================================================================
 
 SHORT_TERM_WEIGHTS = {
-    # Factores técnicos (45%)
-    'rsi': 0.10,
-    'macd': 0.08,
-    'volume_profile': 0.08,
-    'vwap_position': 0.06,
-    'bollinger_position': 0.05,
-    'short_term_trend': 0.05,
-    'konkorde': 0.08,  # NEW: Institutional vs Retail flow
+    # Factores técnicos (50% — includes new signals)
+    'rsi': 0.07,
+    'rsi_crossover': 0.06,          # NEW: RSI crossing oversold threshold
+    'macd': 0.07,
+    'volume_profile': 0.06,
+    'vwap_position': 0.05,
+    'bollinger_position': 0.04,
+    'short_term_trend': 0.03,
+    'konkorde': 0.06,
+    'konkorde_divergence': 0.05,    # NEW: institutional accumulation divergence
+    'trendline_breakout': 0.06,     # NEW: bearish trendline breakout proximity
 
-    # Momentum (25%)
-    'momentum_1w': 0.08,
-    'momentum_1m': 0.10,
-    'relative_strength': 0.07,
+    # Momentum (22%)
+    'momentum_1w': 0.07,
+    'momentum_1m': 0.09,
+    'relative_strength': 0.06,
 
-    # Factores especulativos (25%)
-    'congress_score': 0.12,
+    # Factores especulativos (23%)
+    'congress_score': 0.10,
     'news_sentiment': 0.08,
     'options_flow': 0.05,
 }
@@ -311,6 +314,33 @@ class MultiHorizonScorer:
             components['konkorde'] = max(5, konkorde_score - 10)   # Both selling - very bearish
         else:
             components['konkorde'] = konkorde_score
+
+        # RSI Crossover (oversold recovery signal)
+        rsi_cross_score = data.get('rsi_crossover_score', 50)
+        bullish_crossover = data.get('rsi_bullish_crossover', False)
+        if bullish_crossover:
+            components['rsi_crossover'] = min(90, rsi_cross_score + 5)
+        else:
+            components['rsi_crossover'] = rsi_cross_score
+
+        # Konkorde Divergence (institutional accumulation while price flat)
+        div_score = data.get('konkorde_divergence_score', 50)
+        bullish_div = data.get('konkorde_bullish_divergence', False)
+        if bullish_div:
+            components['konkorde_divergence'] = min(90, div_score + 5)
+        else:
+            components['konkorde_divergence'] = div_score
+
+        # Trendline Breakout (bearish trendline proximity/break)
+        tl_score = data.get('trendline_score', 50)
+        tl_imminent = data.get('trendline_breakout_imminent', False)
+        tl_confirmed = data.get('trendline_breakout_confirmed', False)
+        if tl_confirmed:
+            components['trendline_breakout'] = min(95, tl_score + 5)
+        elif tl_imminent:
+            components['trendline_breakout'] = min(90, tl_score)
+        else:
+            components['trendline_breakout'] = tl_score
 
         # === FACTORES DE MOMENTUM ===
 
@@ -806,6 +836,24 @@ class MultiHorizonScorer:
             parts.append("Konkorde: distribución institucional")
         elif konkorde < 25:
             parts.append("Konkorde: institucionales vendiendo")
+
+        rsi_cross = components.get('rsi_crossover', 50)
+        if rsi_cross > 75:
+            parts.append("RSI cruzando desde sobreventa (señal alcista)")
+        elif rsi_cross < 25:
+            parts.append("RSI cruzando desde sobrecompra (señal bajista)")
+
+        tl = components.get('trendline_breakout', 50)
+        if tl > 80:
+            parts.append("rompimiento de tendencia bajista confirmado")
+        elif tl > 65:
+            parts.append("precio cercano a romper tendencia bajista")
+
+        konk_div = components.get('konkorde_divergence', 50)
+        if konk_div > 70:
+            parts.append("divergencia Konkorde: acumulación institucional oculta")
+        elif konk_div < 30:
+            parts.append("divergencia Konkorde: distribución institucional oculta")
 
         if not parts:
             return "Señales técnicas mixtas"

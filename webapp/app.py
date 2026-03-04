@@ -44,7 +44,7 @@ from webapp.data.providers import (
     get_market_news,
 )
 
-from webapp.config import TICKER_UNIVERSE, HIGH_PROFILE_POLITICIANS
+from webapp.config import TICKER_UNIVERSE, TICKER_UNIVERSE_BY_REGION, REGION_MAP, HIGH_PROFILE_POLITICIANS
 
 # Page config
 st.set_page_config(
@@ -1480,6 +1480,7 @@ def main():
         "🏠 Dashboard",
         "📊 Stock Analysis",
         "🔍 Signals",
+        "📋 Score",
     ]
 
     # Handle programmatic navigation
@@ -1519,7 +1520,7 @@ def main():
     """, unsafe_allow_html=True)
 
     # Logo + Nav in one tight row
-    nav_cols = st.columns([2.5, 1.5, 1.5, 1.5, 0.6, 0.6, 4.8])
+    nav_cols = st.columns([2.5, 1.2, 1.2, 1.2, 1.2, 0.6, 0.6, 3.6])
     with nav_cols[0]:
         st.markdown("""
         <div style="display:flex; align-items:center; gap:4px; padding:0; margin:0;">
@@ -1546,16 +1547,22 @@ def main():
             st.session_state.current_page_index = 2
             st.rerun()
     with nav_cols[4]:
+        if st.button("Score", use_container_width=True,
+                     type="primary" if st.session_state.current_page_index == 3 else "secondary",
+                     key="nav_score"):
+            st.session_state.current_page_index = 3
+            st.rerun()
+    with nav_cols[5]:
         lang = st.session_state.lang
         if st.button("🇪🇸" if lang == 'en' else "🇬🇧", use_container_width=True, key="nav_lang"):
             st.session_state.lang = 'en' if lang == 'es' else 'es'
             st.rerun()
-    with nav_cols[5]:
+    with nav_cols[6]:
         if st.button("🗑", use_container_width=True, key="nav_cache"):
             st.cache_data.clear()
             st.rerun()
 
-    page = pages[st.session_state.current_page_index]
+    page = pages[min(st.session_state.current_page_index, len(pages) - 1)]
 
     # Main content
     if "Dashboard" in page:
@@ -1564,6 +1571,8 @@ def main():
         show_stock_analysis()
     elif "Signals" in page:
         show_signals()
+    elif "Score" in page:
+        show_score_page()
 
 
 def _show_risk_command_center(risk_data, module_scores, crash_probs, score, regime, regime_color, alerts, go):
@@ -2620,106 +2629,6 @@ def show_dashboard():
                         st.rerun()
     else:
         st.markdown('<div style="color:#6e7681; padding:16px; text-align:center;">No news available at this time.</div>', unsafe_allow_html=True)
-
-    # =========================================================================
-    # SECTION H: ALL STOCKS TABLE
-    # =========================================================================
-    st.markdown("""<div class="section-header">
-        <span class="section-icon">📋</span>
-        <h3>All Stocks — Multi-Horizon Scores</h3>
-    </div>""", unsafe_allow_html=True)
-
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        horizon_view = st.selectbox("Sort by", ["Short Term", "Medium Term", "Long Term"], key="dash_hz")
-
-    with st.spinner("Computing scores..."):
-        all_tickers = tuple(TICKER_UNIVERSE)
-        all_scores_df = get_all_scores_batch(all_tickers)
-
-    if not all_scores_df.empty:
-        sort_map = {"Short Term": "Score CP", "Medium Term": "Score MP", "Long Term": "Score LP"}
-        signal_map = {"Short Term": "Señal CP", "Medium Term": "Señal MP", "Long Term": "Señal LP"}
-        sort_col = sort_map[horizon_view]
-        signal_col = signal_map[horizon_view]
-        sorted_df = all_scores_df.sort_values(sort_col, ascending=False).copy()
-
-        display_cols = ['Ticker', 'Empresa', 'Sector', 'Precio',
-                        'Score CP', 'Señal CP', 'Score MP', 'Señal MP', 'Score LP', 'Señal LP']
-        available_cols = [c for c in display_cols if c in sorted_df.columns]
-
-        # Summary metrics with styled cards
-        n_strong = len(sorted_df[sorted_df[signal_col].str.contains('STRONG', case=False, na=False)])
-        n_buys = len(sorted_df[sorted_df[signal_col].str.contains('BUY|ACCUMULATE', case=False, na=False)])
-        n_sells = len(sorted_df[sorted_df[signal_col].str.contains('SELL|REDUCE', case=False, na=False)])
-        avg_score = sorted_df[sort_col].mean()
-
-        st.markdown(f"""
-        <div style="display:flex; gap:10px; margin-bottom:12px;">
-            <div class="congress-stat" style="border-color:#3fb950;">
-                <div class="stat-value" style="color:#3fb950;">{n_strong}</div>
-                <div class="stat-label">Strong Buys</div>
-            </div>
-            <div class="congress-stat" style="border-color:#58a6ff;">
-                <div class="stat-value" style="color:#58a6ff;">{n_buys}</div>
-                <div class="stat-label">Buy Signals</div>
-            </div>
-            <div class="congress-stat" style="border-color:#f85149;">
-                <div class="stat-value" style="color:#f85149;">{n_sells}</div>
-                <div class="stat-label">Sell Signals</div>
-            </div>
-            <div class="congress-stat">
-                <div class="stat-value">{avg_score:.0f}</div>
-                <div class="stat-label">Avg Score</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        def get_action(signal):
-            s = str(signal).upper()
-            if 'STRONG' in s and 'BUY' in s: return 'COMPRAR FUERTE'
-            if 'BUY' in s: return 'COMPRAR'
-            if 'ACCUMULATE' in s: return 'ACUMULAR'
-            if 'HOLD' in s: return 'MANTENER'
-            if 'REDUCE' in s: return 'REDUCIR'
-            if 'SELL' in s: return 'VENDER'
-            return 'ESPERAR'
-
-        sorted_df['Accion'] = sorted_df[signal_col].apply(get_action)
-        table_cols = [c for c in available_cols + ['Accion'] if c in sorted_df.columns]
-
-        st.caption("Click a row to analyze the stock. Click column headers to sort.")
-
-        event = st.dataframe(
-            sorted_df[table_cols],
-            use_container_width=True,
-            hide_index=True,
-            height=520,
-            on_select="rerun",
-            selection_mode="single-row",
-            column_config={
-                "Ticker": st.column_config.TextColumn("Ticker", width="small"),
-                "Empresa": st.column_config.TextColumn("Company", width="medium"),
-                "Sector": st.column_config.TextColumn("Sector", width="small"),
-                "Precio": st.column_config.TextColumn("Price", width="small"),
-                "Score CP": st.column_config.ProgressColumn("ST Score", min_value=0, max_value=100, format="%d"),
-                "Score MP": st.column_config.ProgressColumn("MT Score", min_value=0, max_value=100, format="%d"),
-                "Score LP": st.column_config.ProgressColumn("LT Score", min_value=0, max_value=100, format="%d"),
-                "Señal CP": st.column_config.TextColumn("ST Signal", width="small"),
-                "Señal MP": st.column_config.TextColumn("MT Signal", width="small"),
-                "Señal LP": st.column_config.TextColumn("LT Signal", width="small"),
-                "Accion": st.column_config.TextColumn("Action", width="medium"),
-            },
-        )
-
-        if event and event.selection and event.selection.rows:
-            selected_idx = event.selection.rows[0]
-            selected_ticker = sorted_df.iloc[selected_idx]['Ticker']
-            navigate_to_stock(selected_ticker)
-            st.rerun()
-
-        csv = sorted_df[table_cols].to_csv(index=False)
-        st.download_button("Export CSV", data=csv, file_name=f"stocks_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv")
 
     # =========================================================================
     # SECTION J: MONETARY PLUMBING
@@ -4863,6 +4772,164 @@ def _show_intelligence_tab(ticker: str, data: dict):
                 continue
     else:
         st.info("Sin noticias recientes")
+
+
+# =============================================================================
+# PAGE 4: SCORE — All Stocks Multi-Horizon Scores
+# =============================================================================
+def show_score_page():
+    """Dedicated score page with all tickers, region/sector filters, and CSV export."""
+    st.markdown('<p class="main-header">📋 Score — Multi-Horizon Analysis</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Scores auto-refresh every 10 min. Use 🗑 to force refresh.</p>', unsafe_allow_html=True)
+
+    # Build reverse sector map: ticker → sector
+    ticker_to_sector = {}
+    for sector, tickers in SECTOR_MAP.items():
+        for t in tickers:
+            ticker_to_sector[t] = sector
+
+    # --- Filters row ---
+    f1, f2, f3, f4 = st.columns([1.5, 1.5, 1.5, 1])
+    with f1:
+        all_regions = list(TICKER_UNIVERSE_BY_REGION.keys())
+        selected_regions = st.multiselect("Region", all_regions, default=all_regions, key="score_region")
+    with f2:
+        all_sectors = sorted(SECTOR_MAP.keys())
+        selected_sectors = st.multiselect("Sector", all_sectors, default=[], key="score_sector",
+                                          placeholder="All sectors")
+    with f3:
+        signal_filter = st.selectbox("Signal filter", ["All", "Strong Buy", "Buy", "Hold", "Sell"], key="score_signal")
+    with f4:
+        horizon_view = st.selectbox("Sort by horizon", ["Short Term", "Medium Term", "Long Term"], key="score_hz")
+
+    # Build filtered ticker list
+    filtered_tickers = []
+    for region in selected_regions:
+        filtered_tickers.extend(TICKER_UNIVERSE_BY_REGION.get(region, []))
+    # Remove duplicates preserving order
+    filtered_tickers = list(dict.fromkeys(filtered_tickers))
+
+    # Apply sector filter if any selected
+    if selected_sectors:
+        sector_tickers = set()
+        for s in selected_sectors:
+            sector_tickers.update(SECTOR_MAP.get(s, []))
+        filtered_tickers = [t for t in filtered_tickers if t in sector_tickers]
+
+    if not filtered_tickers:
+        st.warning("No tickers match the selected filters.")
+        return
+
+    st.caption(f"{len(filtered_tickers)} tickers selected")
+
+    with st.spinner(f"Computing scores for {len(filtered_tickers)} tickers..."):
+        all_scores_df = get_all_scores_batch(tuple(filtered_tickers))
+
+    if all_scores_df.empty:
+        st.warning("Could not compute scores. Try again later.")
+        return
+
+    # Add region column
+    all_scores_df['Region'] = all_scores_df['Ticker'].map(REGION_MAP).fillna('US')
+
+    sort_map = {"Short Term": "Score CP", "Medium Term": "Score MP", "Long Term": "Score LP"}
+    signal_map = {"Short Term": "Señal CP", "Medium Term": "Señal MP", "Long Term": "Señal LP"}
+    sort_col = sort_map[horizon_view]
+    signal_col = signal_map[horizon_view]
+    sorted_df = all_scores_df.sort_values(sort_col, ascending=False).copy()
+
+    # Apply signal filter
+    if signal_filter != "All":
+        filter_map = {
+            "Strong Buy": "STRONG.*BUY",
+            "Buy": "BUY|ACCUMULATE",
+            "Hold": "HOLD|NEUTRAL",
+            "Sell": "SELL|REDUCE",
+        }
+        pattern = filter_map.get(signal_filter, "")
+        if pattern:
+            sorted_df = sorted_df[sorted_df[signal_col].str.contains(pattern, case=False, na=False)]
+
+    # Action column
+    def get_action(signal):
+        s = str(signal).upper()
+        if 'STRONG' in s and 'BUY' in s: return 'COMPRAR FUERTE'
+        if 'BUY' in s: return 'COMPRAR'
+        if 'ACCUMULATE' in s: return 'ACUMULAR'
+        if 'HOLD' in s: return 'MANTENER'
+        if 'REDUCE' in s: return 'REDUCIR'
+        if 'SELL' in s: return 'VENDER'
+        return 'ESPERAR'
+
+    sorted_df['Accion'] = sorted_df[signal_col].apply(get_action)
+
+    # --- Summary metrics ---
+    n_strong = len(sorted_df[sorted_df[signal_col].str.contains('STRONG', case=False, na=False)])
+    n_buys = len(sorted_df[sorted_df[signal_col].str.contains('BUY|ACCUMULATE', case=False, na=False)])
+    n_sells = len(sorted_df[sorted_df[signal_col].str.contains('SELL|REDUCE', case=False, na=False)])
+    avg_score = sorted_df[sort_col].mean() if not sorted_df.empty else 0
+
+    st.markdown(f"""
+    <div style="display:flex; gap:10px; margin-bottom:12px;">
+        <div class="congress-stat" style="border-color:#3fb950;">
+            <div class="stat-value" style="color:#3fb950;">{n_strong}</div>
+            <div class="stat-label">Strong Buys</div>
+        </div>
+        <div class="congress-stat" style="border-color:#58a6ff;">
+            <div class="stat-value" style="color:#58a6ff;">{n_buys}</div>
+            <div class="stat-label">Buy Signals</div>
+        </div>
+        <div class="congress-stat" style="border-color:#f85149;">
+            <div class="stat-value" style="color:#f85149;">{n_sells}</div>
+            <div class="stat-label">Sell Signals</div>
+        </div>
+        <div class="congress-stat">
+            <div class="stat-value">{avg_score:.0f}</div>
+            <div class="stat-label">Avg Score</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # --- Main table ---
+    display_cols = ['Ticker', 'Empresa', 'Region', 'Sector', 'Precio',
+                    'Score CP', 'Señal CP', 'Score MP', 'Señal MP', 'Score LP', 'Señal LP', 'Accion']
+    table_cols = [c for c in display_cols if c in sorted_df.columns]
+
+    st.caption("Click a row to analyze the stock. Click column headers to sort.")
+
+    event = st.dataframe(
+        sorted_df[table_cols],
+        use_container_width=True,
+        hide_index=True,
+        height=620,
+        on_select="rerun",
+        selection_mode="single-row",
+        column_config={
+            "Ticker": st.column_config.TextColumn("Ticker", width="small"),
+            "Empresa": st.column_config.TextColumn("Company", width="medium"),
+            "Region": st.column_config.TextColumn("Region", width="small"),
+            "Sector": st.column_config.TextColumn("Sector", width="small"),
+            "Precio": st.column_config.TextColumn("Price", width="small"),
+            "Score CP": st.column_config.ProgressColumn("ST Score", min_value=0, max_value=100, format="%d"),
+            "Score MP": st.column_config.ProgressColumn("MT Score", min_value=0, max_value=100, format="%d"),
+            "Score LP": st.column_config.ProgressColumn("LT Score", min_value=0, max_value=100, format="%d"),
+            "Señal CP": st.column_config.TextColumn("ST Signal", width="small"),
+            "Señal MP": st.column_config.TextColumn("MT Signal", width="small"),
+            "Señal LP": st.column_config.TextColumn("LT Signal", width="small"),
+            "Accion": st.column_config.TextColumn("Action", width="medium"),
+        },
+    )
+
+    if event and event.selection and event.selection.rows:
+        selected_idx = event.selection.rows[0]
+        selected_ticker = sorted_df.iloc[selected_idx]['Ticker']
+        navigate_to_stock(selected_ticker)
+        st.rerun()
+
+    csv = sorted_df[table_cols].to_csv(index=False)
+    st.download_button("Export CSV", data=csv,
+                       file_name=f"scores_{datetime.now().strftime('%Y%m%d')}.csv",
+                       mime="text/csv", key="score_csv_export")
 
 
 # =============================================================================

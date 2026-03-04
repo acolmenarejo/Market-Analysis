@@ -68,6 +68,141 @@ def _calculate_speculative_score(momentum_1m: float, momentum_3m: float,
     return min(max(score, 5), 95)
 
 
+def detect_trendline_breakout(hist, lookback: int = 60, min_touches: int = 3) -> Dict[str, Any]:
+    """
+    Detect bearish trendline and proximity to breakout.
+    Fits linear regression on descending swing highs.
+    Returns trendline_score: 50=neutral, 70-85=imminent, 85+=confirmed breakout.
+    """
+    import numpy as np
+    if hist is None or len(hist) < max(lookback, 30):
+        return {'has_bearish_trendline': False, 'trendline_score': 50,
+                'breakout_imminent': False, 'breakout_confirmed': False}
+
+    n = min(lookback, len(hist))
+    high = hist['High'].values[-n:]
+    close = hist['Close'].values[-n:]
+
+    # Find swing highs: 5-bar local maxima
+    swing_highs = []
+    for i in range(2, len(high) - 2):
+        if high[i] == max(high[i-2:i+3]):
+            swing_highs.append((i, high[i]))
+
+    if len(swing_highs) < min_touches:
+        return {'has_bearish_trendline': False, 'trendline_score': 50,
+                'breakout_imminent': False, 'breakout_confirmed': False}
+
+    # Use most recent swing highs for regression
+    recent = swing_highs[-min(6, len(swing_highs)):]
+    x = np.array([sh[0] for sh in recent])
+    y = np.array([sh[1] for sh in recent])
+    slope, intercept = np.polyfit(x, y, 1)
+
+    if slope >= 0:
+        return {'has_bearish_trendline': False, 'trendline_score': 50,
+                'breakout_imminent': False, 'breakout_confirmed': False}
+
+    # Extrapolate trendline to current bar
+    current_bar = len(close) - 1
+    trendline_val = slope * current_bar + intercept
+    current_price = close[-1]
+    dist_pct = ((current_price - trendline_val) / trendline_val) * 100
+
+    breakout_confirmed = dist_pct > 0.5
+    breakout_imminent = -2.0 < dist_pct <= 0.5
+
+    if breakout_confirmed:
+        score = 85 + min(dist_pct * 5, 10)
+    elif breakout_imminent:
+        score = 70 + (2 + dist_pct) * 7.5
+    elif dist_pct > -5:
+        score = 55 + (5 + dist_pct) * 3
+    else:
+        score = 40
+
+    return {
+        'has_bearish_trendline': True,
+        'trendline_slope': slope,
+        'distance_to_trendline_pct': dist_pct,
+        'breakout_confirmed': breakout_confirmed,
+        'breakout_imminent': breakout_imminent,
+        'trendline_score': min(max(score, 5), 95),
+        'trendline_value_today': trendline_val,
+    }
+
+
+def detect_rsi_crossover(rsi_series, threshold: int = 30, lookback: int = 5) -> Dict[str, Any]:
+    """
+    Detect RSI crossing above oversold (bullish) or below overbought (bearish).
+    Returns rsi_crossover_score: 85 for fresh bullish cross, 20 for bearish.
+    """
+    if rsi_series is None or len(rsi_series) < lookback + 1:
+        return {'bullish_crossover': False, 'bearish_crossover': False, 'rsi_crossover_score': 50}
+
+    recent = rsi_series.iloc[-(lookback + 1):]
+    bullish_cross = False
+    bearish_cross = False
+    bars_since = lookback
+
+    for i in range(1, len(recent)):
+        if recent.iloc[i - 1] < threshold and recent.iloc[i] >= threshold:
+            bullish_cross = True
+            bars_since = len(recent) - 1 - i
+        if recent.iloc[i - 1] > (100 - threshold) and recent.iloc[i] <= (100 - threshold):
+            bearish_cross = True
+            bars_since = len(recent) - 1 - i
+
+    if bullish_cross:
+        score = 85 - (bars_since * 5)
+    elif bearish_cross:
+        score = 20 + (bars_since * 5)
+    else:
+        score = 50
+
+    return {
+        'bullish_crossover': bullish_cross,
+        'bearish_crossover': bearish_cross,
+        'bars_since_crossover': bars_since,
+        'rsi_crossover_score': min(max(score, 5), 95),
+    }
+
+
+def detect_konkorde_divergence(hist, konkorde: Dict[str, Any], lookback: int = 10) -> Dict[str, Any]:
+    """
+    Detect divergence: azul (institutional) rising while price flat/down = stealth accumulation.
+    Returns divergence_score: 75+ for bullish divergence.
+    """
+    import numpy as np
+    if not konkorde or konkorde['azul'].empty or len(konkorde['azul']) < lookback:
+        return {'bullish_divergence': False, 'bearish_divergence': False, 'divergence_score': 50}
+
+    azul = konkorde['azul'].values[-lookback:]
+    close = hist['Close'].values[-lookback:]
+    x = np.arange(lookback)
+
+    azul_slope = np.polyfit(x, azul, 1)[0]
+    price_pct = (close[-1] / close[0] - 1) * 100
+
+    bullish_div = azul_slope > 0.5 and price_pct < 2
+    bearish_div = azul_slope < -0.5 and price_pct > -2
+
+    if bullish_div:
+        score = 75 + min(azul_slope * 5, 20)
+    elif bearish_div:
+        score = 25 - min(abs(azul_slope) * 5, 20)
+    else:
+        score = 50
+
+    return {
+        'bullish_divergence': bullish_div,
+        'bearish_divergence': bearish_div,
+        'divergence_score': min(max(score, 5), 95),
+        'azul_trend': azul_slope,
+        'price_trend': price_pct,
+    }
+
+
 def calculate_konkorde(hist: pd.DataFrame) -> Dict[str, pd.Series]:
     """
     Calculate Konkorde 2.0 indicator.
@@ -488,6 +623,36 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                     except Exception:
                         pass  # Keep defaults if Konkorde calculation fails
 
+                # Trendline breakout detection
+                trendline_data = {'trendline_score': 50, 'breakout_imminent': False, 'breakout_confirmed': False}
+                if hist is not None and not hist.empty and len(hist) >= 30:
+                    try:
+                        trendline_data = detect_trendline_breakout(hist)
+                    except Exception:
+                        pass
+
+                # RSI crossover detection
+                rsi_crossover_data = {'rsi_crossover_score': 50, 'bullish_crossover': False}
+                if hist is not None and not hist.empty and len(hist) >= 20:
+                    try:
+                        delta = hist['Close'].diff()
+                        gain = delta.where(delta > 0, 0).rolling(window=14).mean()
+                        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                        rs = gain / (loss + 0.0001)
+                        rsi_series = 100 - (100 / (1 + rs))
+                        rsi_crossover_data = detect_rsi_crossover(rsi_series)
+                    except Exception:
+                        pass
+
+                # Konkorde divergence (institutional accumulation while price flat)
+                konkorde_div_data = {'divergence_score': 50, 'bullish_divergence': False}
+                if hist is not None and not hist.empty and len(hist) >= 20:
+                    try:
+                        if 'konkorde' in dir() and konkorde and not konkorde['azul'].empty:
+                            konkorde_div_data = detect_konkorde_divergence(hist, konkorde)
+                    except Exception:
+                        pass
+
                 scoring_data = {
                     'ticker': ticker,
                     'price': stock_data['price'],
@@ -545,6 +710,19 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                     # Konkorde signal (institutional vs retail flow)
                     'konkorde_score': konkorde_score,
                     'konkorde_signal': konkorde_signal,
+
+                    # Trendline breakout
+                    'trendline_score': trendline_data.get('trendline_score', 50),
+                    'trendline_breakout_imminent': trendline_data.get('breakout_imminent', False),
+                    'trendline_breakout_confirmed': trendline_data.get('breakout_confirmed', False),
+
+                    # RSI crossover
+                    'rsi_crossover_score': rsi_crossover_data.get('rsi_crossover_score', 50),
+                    'rsi_bullish_crossover': rsi_crossover_data.get('bullish_crossover', False),
+
+                    # Konkorde divergence
+                    'konkorde_divergence_score': konkorde_div_data.get('divergence_score', 50),
+                    'konkorde_bullish_divergence': konkorde_div_data.get('bullish_divergence', False),
                 }
 
                 # Calcular scores
