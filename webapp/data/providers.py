@@ -536,207 +536,266 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
         }
 
 
-@st.cache_data(ttl=300)  # 5 minutos
+def _batch_download_prices(tickers: List[str]) -> dict:
+    """Download price history for all tickers using yf.download() batch API."""
+    import time as _time
+
+    chunk_size = 50
+    all_hist_data = {}
+
+    for chunk_idx in range(0, len(tickers), chunk_size):
+        chunk = tickers[chunk_idx:chunk_idx + chunk_size]
+
+        for attempt in range(3):
+            try:
+                batch_data = yf.download(
+                    chunk, period="6mo", group_by='ticker',
+                    auto_adjust=True, threads=True, progress=False
+                )
+                break
+            except Exception as e:
+                if attempt < 2 and ('429' in str(e) or 'rate' in str(e).lower()):
+                    _time.sleep(3 * (attempt + 1))
+                else:
+                    batch_data = pd.DataFrame()
+                    break
+
+        if batch_data.empty:
+            continue
+
+        # Extract per-ticker history from batch result
+        if batch_data.columns.nlevels == 1:
+            t = chunk[0]
+            if not batch_data.empty and 'Close' in batch_data.columns:
+                all_hist_data[t] = batch_data.copy()
+        else:
+            for t in chunk:
+                try:
+                    if t in batch_data.columns.get_level_values(0):
+                        t_df = batch_data[t].dropna(how='all')
+                        if not t_df.empty and 'Close' in t_df.columns:
+                            all_hist_data[t] = t_df
+                except Exception:
+                    continue
+
+    return all_hist_data
+
+
+def _batch_download_info(tickers: List[str]) -> dict:
+    """Download fundamental info for all tickers using thread pool."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    all_info = {}
+
+    def _fetch_info(t):
+        try:
+            info = yf.Ticker(t).info
+            return t, info if info else {}
+        except Exception:
+            return t, {}
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(_fetch_info, t): t for t in tickers}
+        for future in as_completed(futures):
+            try:
+                ticker, info = future.result(timeout=15)
+                all_info[ticker] = info
+            except Exception:
+                all_info[futures[future]] = {}
+
+    return all_info
+
+
+@st.cache_data(ttl=600, show_spinner="Computing scores...")  # 10 min
 def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
-    """Calcula scores multi-horizonte para lista de tickers"""
+    """Calcula scores multi-horizonte para lista de tickers using batch download."""
     try:
         from webapp.scoring.multi_horizon import MultiHorizonScorer
 
         scorer = MultiHorizonScorer()
         results = []
-
         failed_tickers = []
 
-        for ticker in tickers:
+        all_hist_data = _batch_download_prices(tickers)
+        all_info_data = _batch_download_info(tickers)
+
+        for i, ticker in enumerate(tickers):
+
             try:
-                stock_data = get_stock_data(ticker)
+                hist = all_hist_data.get(ticker)
+                info = all_info_data.get(ticker, {})
 
-                if not stock_data or not isinstance(stock_data, dict):
-                    failed_tickers.append((ticker, 'No data returned'))
+                if hist is None or hist.empty:
+                    failed_tickers.append((ticker, 'No price data'))
                     continue
 
-                if 'error' in stock_data:
-                    failed_tickers.append((ticker, stock_data.get('error', 'Unknown error')))
+                close = hist['Close']
+                if close.empty:
+                    failed_tickers.append((ticker, 'Empty close data'))
                     continue
 
-                # Preparar datos para el scorer (mapear a nombres esperados)
-                # Con valores por defecto seguros para evitar errores
-                rsi = stock_data.get('rsi', 50) or 50
-                macd_bullish = stock_data.get('macd_bullish', False)
-                momentum_1m = stock_data.get('momentum_1m', 0) or 0
-                momentum_3m = stock_data.get('momentum_3m', 0) or 0
+                # RSI (14)
+                delta_c = close.diff()
+                gain = delta_c.where(delta_c > 0, 0).rolling(window=14).mean()
+                loss = (-delta_c.where(delta_c < 0, 0)).rolling(window=14).mean()
+                rs = gain / (loss + 0.0001)
+                rsi_series = 100 - (100 / (1 + rs))
+                rsi = float(rsi_series.iloc[-1]) if not rsi_series.empty else 50
 
-                # Determinar señal MACD
+                # MACD
+                exp12 = close.ewm(span=12, adjust=False).mean()
+                exp26 = close.ewm(span=26, adjust=False).mean()
+                macd = exp12 - exp26
+                signal_line = macd.ewm(span=9, adjust=False).mean()
+                macd_bullish = bool(macd.iloc[-1] > signal_line.iloc[-1]) if not macd.empty else False
+
+                # BB
+                sma20 = close.rolling(window=20).mean()
+                std20 = close.rolling(window=20).std()
+                bb_upper = sma20 + (std20 * 2)
+                bb_lower = sma20 - (std20 * 2)
+                current_price = float(close.iloc[-1])
+                if current_price > float(bb_upper.iloc[-1] if not bb_upper.empty else 0):
+                    bb_position_num, vp_position = 85, 'near_resistance'
+                elif current_price < float(bb_lower.iloc[-1] if not bb_lower.empty else 0):
+                    bb_position_num, vp_position = 15, 'near_support'
+                else:
+                    bb_position_num, vp_position = 50, 'neutral'
+
+                # Momentum
+                momentum_1m = ((close.iloc[-1] / close.iloc[-20]) - 1) * 100 if len(close) >= 20 else 0
+                momentum_3m = ((close.iloc[-1] / close.iloc[-60]) - 1) * 100 if len(close) >= 60 else momentum_1m
+
+                # Volume
+                avg_volume = hist['Volume'].rolling(20).mean().iloc[-1] if len(hist) >= 20 else hist['Volume'].mean()
+                volume_ratio = float(hist['Volume'].iloc[-1] / avg_volume) if avg_volume > 0 else 1.0
+
+                # VWAP
+                typical_price = (hist['High'] + hist['Low'] + hist['Close']) / 3
+                vwap = (typical_price * hist['Volume']).cumsum() / hist['Volume'].cumsum()
+                current_vwap = float(vwap.iloc[-1]) if not vwap.empty else current_price
+
+                price_val = float(info.get('currentPrice', info.get('regularMarketPrice', current_price)))
+
+                # MACD signal string
                 if macd_bullish and momentum_1m > 3:
                     macd_signal = 'bullish_cross'
                 elif macd_bullish:
                     macd_signal = 'bullish'
                 elif not macd_bullish and momentum_1m < -3:
                     macd_signal = 'bearish_cross'
-                elif not macd_bullish:
+                else:
                     macd_signal = 'bearish'
-                else:
-                    macd_signal = 'neutral'
 
-                # Determinar posición BB (convertir string a número 0-100)
-                bb_pos_str = str(stock_data.get('bb_position', 'Middle'))
-                if 'Below' in bb_pos_str:
-                    bb_position_num = 15  # Cerca de banda inferior
-                    vp_position = 'near_support'
-                elif 'Above' in bb_pos_str:
-                    bb_position_num = 85  # Cerca de banda superior
-                    vp_position = 'near_resistance'
-                else:
-                    bb_position_num = 50  # En el medio
-                    vp_position = 'neutral'
-
-                # Calculate Konkorde signal for scoring
-                konkorde_score = 50  # Default neutral
+                # Konkorde
+                konkorde_score = 50
                 konkorde_signal = 'neutral'
-                hist = stock_data.get('history')
-                if hist is not None and not hist.empty and len(hist) >= 20:
+                konkorde = None
+                if len(hist) >= 20:
                     try:
                         konkorde = calculate_konkorde(hist)
                         if not konkorde['azul'].empty:
-                            latest_azul = konkorde['azul'].iloc[-1]
-                            latest_verde = konkorde['verde'].iloc[-1]
-
-                            # Determine Konkorde signal
-                            if latest_azul > 0 and latest_verde > 0:
-                                konkorde_signal = 'strong_bullish'  # Both buying
-                                konkorde_score = 80 + min(latest_azul, 20)
-                            elif latest_azul > 0 and latest_verde < 0:
-                                konkorde_signal = 'accumulation'  # Smart money buying, retail selling
-                                konkorde_score = 70 + min(latest_azul, 15)
-                            elif latest_azul < 0 and latest_verde > 0:
-                                konkorde_signal = 'distribution'  # Smart money selling, retail buying
-                                konkorde_score = 30 - min(abs(latest_azul), 15)
-                            elif latest_azul < 0 and latest_verde < 0:
-                                konkorde_signal = 'strong_bearish'  # Both selling
-                                konkorde_score = 20 - min(abs(latest_azul), 15)
-                            else:
-                                konkorde_signal = 'neutral'
-                                konkorde_score = 50
-
-                            # Clamp score to valid range
+                            la = konkorde['azul'].iloc[-1]
+                            lv = konkorde['verde'].iloc[-1]
+                            if la > 0 and lv > 0:
+                                konkorde_signal = 'strong_bullish'
+                                konkorde_score = 80 + min(la, 20)
+                            elif la > 0 and lv < 0:
+                                konkorde_signal = 'accumulation'
+                                konkorde_score = 70 + min(la, 15)
+                            elif la < 0 and lv > 0:
+                                konkorde_signal = 'distribution'
+                                konkorde_score = 30 - min(abs(la), 15)
+                            elif la < 0 and lv < 0:
+                                konkorde_signal = 'strong_bearish'
+                                konkorde_score = 20 - min(abs(la), 15)
                             konkorde_score = max(5, min(95, konkorde_score))
                     except Exception:
-                        pass  # Keep defaults if Konkorde calculation fails
+                        pass
 
-                # Trendline breakout detection
+                # Trendline breakout
                 trendline_data = {'trendline_score': 50, 'breakout_imminent': False, 'breakout_confirmed': False}
-                if hist is not None and not hist.empty and len(hist) >= 30:
+                if len(hist) >= 30:
                     try:
                         trendline_data = detect_trendline_breakout(hist)
                     except Exception:
                         pass
 
-                # RSI crossover detection
+                # RSI crossover
                 rsi_crossover_data = {'rsi_crossover_score': 50, 'bullish_crossover': False}
-                if hist is not None and not hist.empty and len(hist) >= 20:
+                if len(hist) >= 20:
                     try:
-                        delta = hist['Close'].diff()
-                        gain = delta.where(delta > 0, 0).rolling(window=14).mean()
-                        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-                        rs = gain / (loss + 0.0001)
-                        rsi_series = 100 - (100 / (1 + rs))
                         rsi_crossover_data = detect_rsi_crossover(rsi_series)
                     except Exception:
                         pass
 
-                # Konkorde divergence (institutional accumulation while price flat)
+                # Konkorde divergence
                 konkorde_div_data = {'divergence_score': 50, 'bullish_divergence': False}
-                if hist is not None and not hist.empty and len(hist) >= 20:
+                if konkorde is not None and len(hist) >= 20:
                     try:
-                        if 'konkorde' in dir() and konkorde and not konkorde['azul'].empty:
+                        if not konkorde['azul'].empty:
                             konkorde_div_data = detect_konkorde_divergence(hist, konkorde)
                     except Exception:
                         pass
 
+                # Fundamentals from info
+                roe = (info.get('returnOnEquity', 0) or 0) * 100
+                pe = info.get('trailingPE', info.get('forwardPE', 0)) or 20
+                pb = info.get('priceToBook', 0) or 3
+                ev_ebitda = info.get('enterpriseToEbitda', 0) or 15
+                profit_margin = (info.get('profitMargins', 0) or 0) * 100
+                gross_margin = (info.get('grossMargins', 0) or 0) * 100
+                operating_margin = (info.get('operatingMargins', 0) or 0) * 100
+                debt_to_equity = info.get('debtToEquity', 0) or 50
+                current_ratio_val = info.get('currentRatio', 0) or 1.5
+                dividend_yield = (info.get('dividendYield', 0) or 0) * 100
+                company_name = info.get('longName', info.get('shortName', ticker)) or ticker
+                sector = info.get('sector', 'N/A') or 'N/A'
+
                 scoring_data = {
                     'ticker': ticker,
-                    'price': stock_data['price'],
-                    'vwap': stock_data['vwap'],
-
-                    # Técnicos (nombres esperados por el scorer)
+                    'price': price_val,
+                    'vwap': current_vwap,
                     'rsi_14': rsi,
                     'macd_signal': macd_signal,
                     'volume_profile_position': vp_position,
-                    'bollinger_position': bb_position_num,  # 0-100 numeric
-                    'volume_ratio': stock_data['volume_ratio'],
-
-                    # Momentum
-                    'momentum_1w': momentum_1m / 4,  # Aproximación
-                    'momentum_1m': momentum_1m,
-                    'momentum_3m': momentum_3m,
-                    'momentum_6m': momentum_3m * 1.5,  # Aproximación
-
-                    # Fundamentales
-                    'pe_ratio': stock_data['pe_ratio'] or 20,
-                    'pb_ratio': stock_data['pb_ratio'] or 3,
-                    'ev_ebitda': stock_data['ev_ebitda'] or 15,
-                    'roe': stock_data['roe'] or 15,
-                    'roic': stock_data['roe'] * 0.8 if stock_data['roe'] else 12,
-                    'profit_margin': stock_data['profit_margin'] or 10,
-                    'gross_margin': stock_data['gross_margin'] or 30,
-                    'operating_margin': stock_data['operating_margin'] or 15,
-                    'debt_to_equity': stock_data['debt_to_equity'] or 50,
-                    'debt_ebitda': (stock_data['debt_to_equity'] or 50) / 30,
-                    'current_ratio': stock_data['current_ratio'] or 1.5,
-                    'interest_coverage': 10,  # Default
-                    'dividend_yield': stock_data['dividend_yield'] or 0,
-                    'dividend_growth': 3,  # Default
-
-                    # Sector info
-                    'sector': stock_data['sector'],
-                    'company_name': stock_data['company_name'],
-                    'sector_pe_median': 20,  # Default
-
-                    # Especulativos - calcular dinámicamente
-                    # UPDATED: More aggressive scoring to match original Excel patterns
-                    # Congress score based on momentum + fundamentals as proxy
+                    'bollinger_position': bb_position_num,
+                    'volume_ratio': volume_ratio,
+                    'momentum_1w': momentum_1m / 4,
+                    'momentum_1m': float(momentum_1m),
+                    'momentum_3m': float(momentum_3m),
+                    'momentum_6m': float(momentum_3m) * 1.5,
+                    'pe_ratio': pe, 'pb_ratio': pb, 'ev_ebitda': ev_ebitda,
+                    'roe': roe or 15, 'roic': roe * 0.8 if roe else 12,
+                    'profit_margin': profit_margin or 10, 'gross_margin': gross_margin or 30,
+                    'operating_margin': operating_margin or 15,
+                    'debt_to_equity': debt_to_equity, 'debt_ebitda': debt_to_equity / 30,
+                    'current_ratio': current_ratio_val, 'interest_coverage': 10,
+                    'dividend_yield': dividend_yield, 'dividend_growth': 3,
+                    'sector': sector, 'company_name': company_name, 'sector_pe_median': 20,
                     'congress_score': _calculate_speculative_score(
-                        momentum_1m, momentum_3m,
-                        stock_data.get('roe', 15),
-                        stock_data.get('volume_ratio', 1.0)
-                    ),
-                    # News sentiment proxy: more aggressive - momentum drives sentiment
-                    'news_sentiment': min(max(50 + (momentum_1m * 2.0) + (momentum_3m * 0.8), 10), 90),
-                    # Options flow proxy: high volume + momentum = bullish flow
-                    'options_flow': min(max(50 + ((stock_data.get('volume_ratio', 1.0) - 1) * 20) + (momentum_1m * 1.0), 10), 90),
-                    'analyst_revisions': momentum_3m * 0.5,  # Proxy from momentum - more aggressive
-                    'earnings_surprise': momentum_1m * 0.8,  # Proxy from recent move - more aggressive
-
-                    # Konkorde signal (institutional vs retail flow)
-                    'konkorde_score': konkorde_score,
-                    'konkorde_signal': konkorde_signal,
-
-                    # Trendline breakout
+                        float(momentum_1m), float(momentum_3m), roe or 15, volume_ratio),
+                    'news_sentiment': min(max(50 + (float(momentum_1m) * 2.0) + (float(momentum_3m) * 0.8), 10), 90),
+                    'options_flow': min(max(50 + ((volume_ratio - 1) * 20) + (float(momentum_1m) * 1.0), 10), 90),
+                    'analyst_revisions': float(momentum_3m) * 0.5,
+                    'earnings_surprise': float(momentum_1m) * 0.8,
+                    'konkorde_score': konkorde_score, 'konkorde_signal': konkorde_signal,
                     'trendline_score': trendline_data.get('trendline_score', 50),
                     'trendline_breakout_imminent': trendline_data.get('breakout_imminent', False),
                     'trendline_breakout_confirmed': trendline_data.get('breakout_confirmed', False),
-
-                    # RSI crossover
                     'rsi_crossover_score': rsi_crossover_data.get('rsi_crossover_score', 50),
                     'rsi_bullish_crossover': rsi_crossover_data.get('bullish_crossover', False),
-
-                    # Konkorde divergence
                     'konkorde_divergence_score': konkorde_div_data.get('divergence_score', 50),
                     'konkorde_bullish_divergence': konkorde_div_data.get('bullish_divergence', False),
                 }
 
-                # Calcular scores
                 result = scorer.calculate_all_horizons(scoring_data)
-
-                company_name = stock_data.get('company_name', ticker) or ticker
-                sector = stock_data.get('sector', 'N/A') or 'N/A'
-                price = stock_data.get('price', 0) or 0
 
                 results.append({
                     'Ticker': ticker,
                     'Empresa': company_name[:30] if len(company_name) > 30 else company_name,
                     'Sector': sector,
-                    'Precio': f"${price:.2f}" if price else 'N/A',
+                    'Precio': f"${price_val:.2f}" if price_val else 'N/A',
                     'Score CP': result.short_term.total_score,
                     'Señal CP': result.short_term.signal.value,
                     'Score MP': result.medium_term.total_score,
@@ -749,10 +808,10 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                 failed_tickers.append((ticker, str(e)))
                 continue
 
-        # Mostrar advertencia si hay tickers que fallaron
         if failed_tickers:
             failed_list = ', '.join([f"{t} ({e[:30]})" for t, e in failed_tickers[:5]])
-            st.warning(f"No se pudieron calcular {len(failed_tickers)} tickers: {failed_list}")
+            extra = f" (+{len(failed_tickers) - 5} more)" if len(failed_tickers) > 5 else ""
+            st.warning(f"Could not score {len(failed_tickers)} tickers: {failed_list}{extra}")
 
         return pd.DataFrame(results) if results else pd.DataFrame()
 

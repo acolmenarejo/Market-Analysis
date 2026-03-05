@@ -4997,8 +4997,7 @@ def show_score_page():
 
     st.caption(f"{len(filtered_tickers)} tickers selected")
 
-    with st.spinner(f"Computing scores for {len(filtered_tickers)} tickers..."):
-        all_scores_df = get_all_scores_batch(tuple(filtered_tickers))
+    all_scores_df = get_all_scores_batch(tuple(filtered_tickers))
 
     if all_scores_df.empty:
         st.warning("Could not compute scores. Try again later.")
