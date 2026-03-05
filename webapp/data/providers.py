@@ -2626,8 +2626,9 @@ def get_skew_percentile(ticker: str, current_skew: float) -> dict:
 
         skew_values = [h['skew'] for h in history]
 
-        # Calculate percentile
-        percentile = (np.sum(np.array(skew_values) < current_skew) / len(skew_values)) * 100
+        # Calculate percentile using rank method (avoids 0% for lowest value)
+        from scipy.stats import percentileofscore
+        percentile = percentileofscore(skew_values, current_skew, kind='rank')
 
         # Calculate stats
         recent_30d = [h['skew'] for h in history[-30:]] if len(history) >= 30 else skew_values

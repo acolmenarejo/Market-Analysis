@@ -3636,36 +3636,120 @@ def _show_options_tab(ticker: str, data: dict):
         st.warning(f"⚠️ Could not generate strategy: {str(e)}")
 
     # =====================================================================
-    # SKEW HISTORICAL CHART
+    # SKEW HISTORICAL CHART — TradingView Lightweight Charts
     # =====================================================================
     st.markdown("---")
     st.markdown("### 📈 SKEW Historical Timeline (MenthorQ Style)")
 
     try:
-        from webapp.data.providers import create_skew_historical_chart
+        import json as _json
+        from streamlit_lightweight_charts import renderLightweightCharts
+        from webapp.data.providers import track_skew_history
 
-        skew_chart = create_skew_historical_chart(ticker)
+        history_file = Path(__file__).parent.parent / 'data' / f'skew_history_{ticker}.json'
+        if history_file.exists():
+            with open(history_file, 'r') as _f:
+                skew_history = _json.load(_f)
+        else:
+            skew_history = []
 
-        if skew_chart:
-            st.plotly_chart(skew_chart, use_container_width=True, key=f"skew_hist_{ticker}")
+        if len(skew_history) >= 2:
+            skew_df = pd.DataFrame(skew_history)
+            skew_df['date'] = pd.to_datetime(skew_df['date'])
+            skew_df = skew_df.sort_values('date')
+            skew_df['avg_30d'] = skew_df['skew'].rolling(min(30, len(skew_df)), min_periods=1).mean()
+
+            # Convert timestamps to epoch seconds
+            skew_df['time'] = skew_df['date'].astype('int64') // 10**9
+
+            def _to_rec(df):
+                return _json.loads(df.fillna(0).to_json(orient='records'))
+
+            # SKEW line data with color based on bias
+            _skew_line = skew_df[['time', 'skew']].rename(columns={'skew': 'value'}).copy()
+            avg_skew = skew_df['skew'].mean()
+            _skew_line['color'] = np.where(skew_df['skew'] > avg_skew,
+                                           'rgba(248,81,73,0.9)', 'rgba(63,185,80,0.9)')
+
+            # SKEW histogram (area fill effect)
+            _skew_hist = skew_df[['time', 'skew']].rename(columns={'skew': 'value'}).copy()
+            _skew_hist['color'] = np.where(skew_df['skew'] > avg_skew,
+                                           'rgba(248,81,73,0.25)', 'rgba(63,185,80,0.25)')
+
+            # 30D avg line
+            _avg_line = _to_rec(skew_df[['time', 'avg_30d']].dropna().rename(columns={'avg_30d': 'value'}))
+
+            # Also fetch price candles for top pane
+            _price_candles = []
+            hist_price = data.get('history')
+            if hist_price is not None and not hist_price.empty:
+                _pdf = hist_price.reset_index()
+                _time_col = _pdf.columns[0]
+                _pdf = _pdf.rename(columns={_time_col: 'time', 'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close'})
+                _pdf = _pdf.dropna(subset=['open', 'high', 'low', 'close'])
+                _pdf['time'] = pd.to_datetime(_pdf['time']).astype('int64') // 10**9
+                _price_candles = _to_rec(_pdf[['time', 'open', 'high', 'low', 'close']])
+
+            _base_layout = {
+                "layout": {"background": {"type": "solid", "color": "#0d1117"}, "textColor": "#e6edf3"},
+                "grid": {"vertLines": {"color": "#21262d"}, "horzLines": {"color": "#21262d"}},
+                "crosshair": {"mode": 0},
+                "priceScale": {"borderColor": "#30363d"},
+                "timeScale": {"borderColor": "#30363d"},
+            }
+
+            panes = []
+
+            # Pane 1: Price (if available)
+            if _price_candles:
+                panes.append({
+                    "chart": {**_base_layout, "height": 250,
+                              "watermark": {"visible": True, "fontSize": 36, "horzAlign": "center", "vertAlign": "center",
+                                            "color": "rgba(88,166,255,0.08)", "text": f"{ticker}"},
+                              "timeScale": {"visible": False, "borderColor": "#30363d"}},
+                    "series": [{"type": "Candlestick", "data": _price_candles, "options": {
+                        "upColor": "rgba(63,185,80,0.9)", "downColor": "rgba(248,81,73,0.9)",
+                        "borderVisible": False, "wickUpColor": "rgba(63,185,80,0.9)", "wickDownColor": "rgba(248,81,73,0.9)"
+                    }}]
+                })
+
+            # Pane 2: SKEW timeline
+            panes.append({
+                "chart": {
+                    "height": 200,
+                    "layout": {"background": {"type": "solid", "color": "#0d1117"}, "textColor": "#e6edf3"},
+                    "grid": {"vertLines": {"color": "rgba(33,38,45,0)"}, "horzLines": {"color": "#21262d"}},
+                    "timeScale": {"visible": True, "borderColor": "#30363d"},
+                    "watermark": {"visible": True, "fontSize": 18, "horzAlign": "left", "vertAlign": "top",
+                                  "color": "rgba(88,166,255,0.4)", "text": "25Δ Risk Reversal SKEW"},
+                },
+                "series": [
+                    {"type": "Histogram", "data": _to_rec(_skew_hist), "options": {
+                        "priceScaleId": "skew", "title": "SKEW Zone"}},
+                    {"type": "Line", "data": _to_rec(_skew_line[['time', 'value']]), "options": {
+                        "color": "#ffffff", "lineWidth": 2, "priceScaleId": "skew", "title": "25D RR"}},
+                    {"type": "Line", "data": _avg_line, "options": {
+                        "color": "#d29922", "lineWidth": 1, "lineStyle": 2, "priceScaleId": "skew", "title": "30D Avg"}},
+                ]
+            })
+
+            renderLightweightCharts(panes, key=f"skew_lwc_{ticker}")
+
             st.markdown("""
             <div style="font-size: 0.7rem; color: #6e7681; padding: 10px; background: #161b22; border-radius: 6px; margin-top: 8px;">
-                <strong>📊 How to Read:</strong><br>
-                • <strong>Top Panel:</strong> Price candlesticks<br>
-                • <strong>Bottom Panel:</strong> 25Δ Risk Reversal timeline<br>
-                • <span style="color: #f85149;">Red zone (PUT BIAS)</span>: SKEW above avg → Institutions hedging<br>
-                • <span style="color: #3fb950;">Green zone (CALL BIAS)</span>: SKEW below avg → Lower fear<br>
-                • <span style="color: #ffffff;">White line</span>: Current 25D RR<br>
-                • <span style="color: #d29922;">Yellow line</span>: 30-day average<br>
-                <br>
-                <strong>Divergence Alert:</strong> If price ↑ but SKEW ↑ = Institutions buying protection despite rally = Caution!
+                <strong>How to Read:</strong>
+                <span style="color: #f85149;">Red bars</span> = PUT BIAS (SKEW above avg, institutions hedging) |
+                <span style="color: #3fb950;">Green bars</span> = CALL BIAS (SKEW below avg) |
+                <span style="color: #ffffff;">White line</span> = Current 25D RR |
+                <span style="color: #d29922;">Yellow dashed</span> = 30-day average<br>
+                <strong>Divergence Alert:</strong> Price up + SKEW up = Institutions buying protection despite rally = Caution!
             </div>
             """, unsafe_allow_html=True)
         else:
-            st.info("📊 SKEW chart requires ≥2 days of data. Check back tomorrow!")
+            st.info("SKEW chart requires at least 2 days of data. Check back tomorrow!")
 
     except Exception as e:
-        st.warning(f"⚠️ Could not create SKEW chart: {str(e)}")
+        st.warning(f"Could not create SKEW chart: {str(e)}")
 
     # =====================================================================
     # CHECK MINIMUM OI FOR GEX ANALYSIS
@@ -3915,6 +3999,97 @@ def _show_options_tab(ticker: str, data: dict):
                 <div style="font-size:0.9rem; color:#bc8cff; font-weight:700;">&#36;{max_pain_strike:.0f}</div>
             </div>
         </div>""", unsafe_allow_html=True)
+
+        # =====================================================================
+        # PER-EXPIRATION GEX BREAKDOWN — Individual charts per expiry
+        # =====================================================================
+        st.markdown("---")
+        st.markdown(f"""<div style="font-size:0.9rem; font-weight:700; color:#e6edf3; margin-bottom:4px;">
+            GEX by Expiration — {ticker}
+        </div>
+        <div style="font-size:0.7rem; color:#6e7681; margin-bottom:10px;">
+            Individual gamma profiles for each expiration (short → long term)
+        </div>""", unsafe_allow_html=True)
+
+        exp_gex_charts = []
+        for exp_i in exps_to_use[:4]:
+            try:
+                if exp_i == selected_exp:
+                    c_df_i, p_df_i = calls_f.copy(), puts_f.copy()
+                else:
+                    ch_i = stock.option_chain(exp_i)
+                    c_df_i = ch_i.calls[(ch_i.calls['strike'] >= strike_range[0]) & (ch_i.calls['strike'] <= strike_range[1])].copy()
+                    p_df_i = ch_i.puts[(ch_i.puts['strike'] >= strike_range[0]) & (ch_i.puts['strike'] <= strike_range[1])].copy()
+                    for df_ in [c_df_i, p_df_i]:
+                        if 'openInterest' in df_.columns:
+                            df_['openInterest'] = df_['openInterest'].fillna(0).astype(float)
+                        else:
+                            df_['openInterest'] = 0.0
+
+                exp_date_i = datetime.strptime(exp_i, '%Y-%m-%d')
+                dte_i = max((exp_date_i - datetime.now()).days, 1)
+                avg_iv_dec = max(avg_iv / 100, 0.15)
+                sigma_i = max(avg_iv_dec * (dte_i / 365) ** 0.5, 0.02)
+
+                exp_net = {}
+                for _, row in c_df_i.iterrows():
+                    s = row['strike']
+                    oi = float(row.get('openInterest', 0) or 0)
+                    if oi > 0:
+                        m = (s - price) / price
+                        g = np.exp(-0.5 * (m / sigma_i) ** 2)
+                        exp_net[s] = exp_net.get(s, 0) + oi * g * 100
+                for _, row in p_df_i.iterrows():
+                    s = row['strike']
+                    oi = float(row.get('openInterest', 0) or 0)
+                    if oi > 0:
+                        m = (s - price) / price
+                        g = np.exp(-0.5 * (m / sigma_i) ** 2)
+                        exp_net[s] = exp_net.get(s, 0) - oi * g * 100
+
+                if exp_net:
+                    net_sum = sum(exp_net.values())
+                    exp_regime = "POS γ" if net_sum > 0 else "NEG γ"
+                    exp_regime_c = '#3fb950' if net_sum > 0 else '#f85149'
+                    exp_gex_charts.append({
+                        'exp': exp_i, 'dte': dte_i, 'net': exp_net,
+                        'regime': exp_regime, 'regime_color': exp_regime_c, 'total': net_sum
+                    })
+            except Exception:
+                continue
+
+        if exp_gex_charts:
+            n_charts = len(exp_gex_charts)
+            gex_cols = st.columns(n_charts)
+            for idx, eg in enumerate(exp_gex_charts):
+                with gex_cols[idx]:
+                    st.markdown(f"""<div style="text-align:center; margin-bottom:4px;">
+                        <div style="font-size:0.75rem; font-weight:700; color:#e6edf3;">{eg['exp']}</div>
+                        <div style="font-size:0.65rem; color:#6e7681;">{eg['dte']}d</div>
+                        <span style="font-size:0.6rem; font-weight:700; color:{eg['regime_color']}; background:{eg['regime_color']}22; padding:1px 6px; border-radius:8px;">{eg['regime']}</span>
+                    </div>""", unsafe_allow_html=True)
+
+                    strikes = sorted(eg['net'].keys())
+                    vals = [eg['net'][s] for s in strikes]
+                    colors = ['rgba(63,185,80,0.75)' if v >= 0 else 'rgba(248,81,73,0.75)' for v in vals]
+
+                    fig_exp = go.Figure()
+                    fig_exp.add_trace(go.Bar(
+                        y=strikes, x=vals, orientation='h',
+                        marker_color=colors, showlegend=False,
+                        hovertemplate='&#36;%{y:.0f}: %{x:,.0f}<extra></extra>'
+                    ))
+                    fig_exp.add_hline(y=price, line_dash="dash", line_color="#ffffff", line_width=1)
+                    fig_exp.update_layout(
+                        height=280, margin=dict(l=5, r=5, t=5, b=5),
+                        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(13,17,23,0.5)',
+                        font={'color': '#e6edf3', 'size': 9},
+                        xaxis=dict(gridcolor='#21262d', zeroline=True, zerolinecolor='#30363d', showticklabels=False),
+                        yaxis=dict(gridcolor='#21262d', tickformat='$,.0f', dtick=5 if len(strikes) > 15 else None),
+                        bargap=0.15,
+                    )
+                    st.plotly_chart(fig_exp, use_container_width=True, config={'displayModeBar': False},
+                                    key=f"gex_exp_{ticker}_{eg['exp']}")
 
         # =====================================================================
         # DYNAMIC GEX INTERPRETATION — reads the actual chart data
