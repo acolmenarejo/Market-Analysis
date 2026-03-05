@@ -643,7 +643,14 @@ st.markdown("""
         padding: 0 !important;
         margin: 0 !important;
     }
-    .stApp { margin-top: 0 !important; padding-top: 0 !important; }
+    .stApp {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+        background-color: #0d1117 !important;
+    }
+    .stApp > header { background-color: #0d1117 !important; }
+    [data-testid="stAppViewContainer"] { background-color: #0d1117 !important; }
+    .main, section.main { background-color: #0d1117 !important; min-height: 100vh; }
     .st-emotion-cache-zy6yx3 { padding: 0rem 1rem 10rem !important; }
     [data-testid="stAppViewContainer"],
     [data-testid="stAppViewContainer"] > div,
@@ -5069,15 +5076,23 @@ def show_score_page():
                     'Score CP', 'Señal CP', 'Score MP', 'Señal MP', 'Score LP', 'Señal LP', 'Accion']
     table_cols = [c for c in display_cols if c in sorted_df.columns]
 
-    st.caption("Click a row to analyze the stock. Click column headers to sort.")
+    # Quick navigate to a ticker from the table
+    nav_col1, nav_col2 = st.columns([3, 1])
+    with nav_col1:
+        ticker_options = sorted_df['Ticker'].tolist()
+        selected_nav = st.selectbox("Quick navigate to ticker", [""] + ticker_options,
+                                     key="score_nav_ticker", format_func=lambda x: x if x else "Select a ticker to analyze...")
+    with nav_col2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if selected_nav and st.button("Analyze →", key="score_nav_btn", type="primary", use_container_width=True):
+            navigate_to_stock(selected_nav)
+            st.rerun()
 
-    event = st.dataframe(
+    st.dataframe(
         sorted_df[table_cols],
         use_container_width=True,
         hide_index=True,
         height=620,
-        on_select="rerun",
-        selection_mode="single-row",
         column_config={
             "Ticker": st.column_config.TextColumn("Ticker", width="small"),
             "Empresa": st.column_config.TextColumn("Company", width="medium"),
@@ -5093,12 +5108,6 @@ def show_score_page():
             "Accion": st.column_config.TextColumn("Action", width="medium"),
         },
     )
-
-    if event and event.selection and event.selection.rows:
-        selected_idx = event.selection.rows[0]
-        selected_ticker = sorted_df.iloc[selected_idx]['Ticker']
-        navigate_to_stock(selected_ticker)
-        st.rerun()
 
     csv = sorted_df[table_cols].to_csv(index=False)
     st.download_button("Export CSV", data=csv,
