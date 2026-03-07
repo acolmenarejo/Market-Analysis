@@ -58,7 +58,7 @@ TICKER_UNIVERSE_BY_REGION = {
         'CRM', 'ORCL', 'IBM', 'NOW', 'ADBE', 'PLTR', 'SNOW', 'DDOG', 'ZS', 'CRWD',
         'PANW', 'NET', 'TTD', 'HUBS', 'WDAY', 'TEAM', 'ZM', 'DOCU',
         # Fintech
-        'V', 'MA', 'PYPL', 'SQ', 'COIN', 'HOOD', 'SOFI', 'AFRM', 'UPST',
+        'V', 'MA', 'PYPL', 'XYZ', 'COIN', 'HOOD', 'SOFI', 'AFRM', 'UPST',
         # Banks
         'JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'SCHW', 'BLK',
         # Healthcare / Biotech

@@ -58,76 +58,96 @@ class MultiHorizonResult:
 # CONFIGURACIÓN DE PESOS POR HORIZONTE
 # =============================================================================
 
+# Backtest-calibrated weights (2-year walk-forward, 25 US stocks)
+# Key finding: mean-reversion dominates at all horizons.
+# High scores must identify OVERSOLD + QUALITY setups, not extended momentum.
+
 SHORT_TERM_WEIGHTS = {
-    # Factores técnicos (50% — includes new signals)
-    'rsi': 0.07,
-    'rsi_crossover': 0.06,          # NEW: RSI crossing oversold threshold
-    'macd': 0.07,
-    'volume_profile': 0.06,
-    'vwap_position': 0.05,
-    'bollinger_position': 0.04,
-    'short_term_trend': 0.03,
-    'konkorde': 0.06,
-    'konkorde_divergence': 0.05,    # NEW: institutional accumulation divergence
-    'trendline_breakout': 0.06,     # NEW: bearish trendline breakout proximity
+    # Mean-reversion & Contrarian signals (40%)
+    'rsi': 0.08,                    # RSI contrarian (oversold = buy)
+    'bollinger_position': 0.07,     # Near lower BB = opportunity
+    'mean_reversion': 0.10,         # Combined RSI+momentum contrarian
+    'iv_percentile': 0.06,          # Low vol percentile = calm entry
+    'vix_regime': 0.04,             # VIX regime context
+    'skew_score': 0.05,             # Extreme put skew = contrarian buy
 
-    # Momentum (22%)
-    'momentum_1w': 0.07,
-    'momentum_1m': 0.09,
-    'relative_strength': 0.06,
+    # Trend context (25%) — confirms healthy pullback, not breakdown
+    'rsi_crossover': 0.05,          # Oversold recovery
+    'macd': 0.05,                   # MACD cross during pullback
+    'konkorde': 0.05,               # Institutional accumulation
+    'konkorde_divergence': 0.05,    # Inst. buying while price drops
+    'trendline_breakout': 0.05,     # Trendline breakout
 
-    # Factores especulativos (23%)
-    'congress_score': 0.10,
-    'news_sentiment': 0.08,
-    'options_flow': 0.05,
+    # Contrarian momentum (15%) — recent losers outperform
+    'momentum_1w': 0.05,            # INVERTED: negative = higher score
+    'momentum_1m': 0.06,            # INVERTED: pullback = opportunity
+    'relative_strength': 0.04,      # Underperformers catch up
+
+    # Speculative (20%)
+    'congress_score': 0.08,
+    'news_sentiment': 0.06,
+    'options_flow': 0.04,
+    'volume_profile': 0.02,
 }
 
 MEDIUM_TERM_WEIGHTS = {
-    # Momentum (40%)
-    'momentum_3m': 0.15,
-    'momentum_6m': 0.10,
-    'analyst_revisions': 0.10,
-    'earnings_momentum': 0.05,
-
-    # Quality (30%)
-    'roe': 0.08,
-    'roic': 0.08,
+    # Quality fundamentals (35%) — quality stocks recover faster
+    'roe': 0.09,
+    'roic': 0.09,
     'margin_trend': 0.07,
     'debt_trend': 0.07,
+    'fcf_quality_mt': 0.03,
 
-    # Técnico (20%)
-    'trend_strength': 0.08,
-    'support_resistance': 0.07,
-    'sector_rotation': 0.05,
+    # Mean-reversion (20%)
+    'mean_reversion': 0.08,         # Combined oversold signal
+    'sector_rs': 0.06,              # Sector laggards catch up
+    'short_interest': 0.04,         # Short squeeze potential
+    'vix_regime': 0.02,
 
-    # Especulativo (10%)
+    # Contrarian momentum (20%)
+    'momentum_3m': 0.08,            # INVERTED: recent losers
+    'momentum_6m': 0.06,            # INVERTED
+    'analyst_revisions': 0.06,      # Positive revisions still valuable
+
+    # Technical context (15%)
+    'trend_strength': 0.06,
+    'support_resistance': 0.05,
+    'earnings_momentum': 0.04,
+
+    # Speculative (10%)
     'congress_score': 0.05,
     'institutional_flow': 0.05,
 }
 
 LONG_TERM_WEIGHTS = {
-    # Value (35%)
+    # Value (35%) — cheap + quality = best LT returns
     'pe_percentile': 0.08,
     'pb_percentile': 0.05,
-    'ev_ebitda_percentile': 0.08,
+    'ev_ebitda_percentile': 0.07,
     'fcf_yield': 0.08,
-    'peg_ratio': 0.06,
+    'peg_ratio': 0.05,
+    'mean_reversion': 0.02,
 
-    # Quality (35%)
-    'roe': 0.08,
-    'roic': 0.10,
-    'margin_stability': 0.08,
-    'moat_score': 0.09,
+    # Quality (30%)
+    'roe': 0.07,
+    'roic': 0.08,
+    'margin_stability': 0.06,
+    'moat_score': 0.06,
+    'fcf_quality': 0.05,
 
     # Stability (20%)
-    'debt_ebitda': 0.08,
-    'interest_coverage': 0.05,
+    'debt_ebitda': 0.07,
+    'interest_coverage': 0.04,
     'dividend_stability': 0.04,
     'earnings_stability': 0.03,
+    'vix_regime': 0.02,
 
-    # Especulativo (10%)
+    # Speculative (10%)
     'congress_long_term': 0.05,
     'insider_activity': 0.05,
+
+    # Contrarian (5%)
+    'sector_rs': 0.03,
 }
 
 
@@ -342,26 +362,39 @@ class MultiHorizonScorer:
         else:
             components['trendline_breakout'] = tl_score
 
-        # === FACTORES DE MOMENTUM ===
+        # === CONTRARIAN MOMENTUM (backtest-calibrated: losers outperform) ===
 
-        # Momentum 1 semana
+        # Momentum 1 week — INVERTED: recent drop = buy opportunity
         mom_1w = data.get('momentum_1w', 0)
-        components['momentum_1w'] = self._momentum_to_score(mom_1w)
+        components['momentum_1w'] = max(10, min(90, 50 - mom_1w * 3))
 
-        # Momentum 1 mes
+        # Momentum 1 month — INVERTED: pullback = opportunity
         mom_1m = data.get('momentum_1m', 0)
-        components['momentum_1m'] = self._momentum_to_score(mom_1m)
+        components['momentum_1m'] = max(10, min(90, 50 - mom_1m * 1.5))
 
-        # Relative Strength vs SPY
+        # Relative Strength vs SPY — INVERTED: underperformers catch up
         rs = data.get('relative_strength_1m', 0)
-        if rs > 5:
-            components['relative_strength'] = 80
-        elif rs > 0:
+        if rs < -5:
+            components['relative_strength'] = 80  # Laggard = buy
+        elif rs < 0:
             components['relative_strength'] = 65
-        elif rs > -5:
+        elif rs < 5:
             components['relative_strength'] = 45
         else:
-            components['relative_strength'] = 30
+            components['relative_strength'] = 30  # Extended = risk
+
+        # === MEAN REVERSION SIGNAL ===
+        rsi_val = data.get('rsi_14', 50)
+        if rsi_val < 30 and mom_1m < -5:
+            components['mean_reversion'] = 92  # Strong oversold bounce setup
+        elif rsi_val < 40 and mom_1m < -3:
+            components['mean_reversion'] = 78
+        elif rsi_val > 70 and mom_1m > 10:
+            components['mean_reversion'] = 15  # Overbought risk
+        elif rsi_val > 65 and mom_1m > 5:
+            components['mean_reversion'] = 25
+        else:
+            components['mean_reversion'] = 50
 
         # === FACTORES ESPECULATIVOS ===
 
@@ -385,6 +418,20 @@ class MultiHorizonScorer:
             components['options_flow'] = 15
         else:
             components['options_flow'] = 50
+
+        # === PROFESSIONAL VARIABLES ===
+
+        # IV Percentile: low IV = cheap options = bullish entry
+        iv_pct = data.get('iv_percentile', 50)
+        components['iv_percentile'] = max(5, min(95, 100 - iv_pct))  # Invert: low IV = high score
+
+        # VIX Regime modifier
+        components['vix_regime'] = data.get('vix_regime', 50)
+
+        # Skew Score: from 25Δ risk reversal
+        # High put skew percentile (>80) = contrarian buy; low = complacency
+        skew = data.get('skew_score', 50)
+        components['skew_score'] = skew
 
         # Calcular score total
         total = 0
@@ -426,15 +473,15 @@ class MultiHorizonScorer:
         components = {}
         weights = self.weights[Horizon.MEDIUM_TERM]
 
-        # === MOMENTUM ===
+        # === CONTRARIAN MOMENTUM (backtest: recent losers outperform at MT) ===
 
-        # Momentum 3 meses
+        # Momentum 3 months — INVERTED
         mom_3m = data.get('momentum_3m', 0)
-        components['momentum_3m'] = self._momentum_to_score(mom_3m, scale=1.5)
+        components['momentum_3m'] = max(10, min(90, 50 - mom_3m * 0.8))
 
-        # Momentum 6 meses
+        # Momentum 6 months — INVERTED (less aggressive)
         mom_6m = data.get('momentum_6m', 0)
-        components['momentum_6m'] = self._momentum_to_score(mom_6m, scale=1.2)
+        components['momentum_6m'] = max(10, min(90, 50 - mom_6m * 0.4))
 
         # Analyst Revisions
         revisions = data.get('analyst_revisions', 0)  # % cambio en estimaciones
@@ -538,6 +585,43 @@ class MultiHorizonScorer:
         # Sector Rotation
         sector_strength = data.get('sector_strength', 50)
         components['sector_rotation'] = sector_strength
+
+        # === PROFESSIONAL VARIABLES ===
+
+        # === MEAN REVERSION & PROFESSIONAL ===
+
+        # Mean reversion (oversold + quality = strong MT buy)
+        rsi_val = data.get('rsi_14', 50)
+        mom_3m_raw = data.get('momentum_3m', 0)
+        if rsi_val < 35 and mom_3m_raw < -10:
+            components['mean_reversion'] = 88  # Deep pullback
+        elif rsi_val < 45 and mom_3m_raw < -5:
+            components['mean_reversion'] = 72
+        elif rsi_val > 70 and mom_3m_raw > 15:
+            components['mean_reversion'] = 20  # Overextended
+        else:
+            components['mean_reversion'] = 50
+
+        # Sector RS — INVERTED: sector laggards outperform (contrarian)
+        sr = data.get('sector_rs', 50)
+        components['sector_rs'] = max(10, min(90, 100 - sr))
+
+        # Short Interest: high SI = squeeze potential
+        si = data.get('short_interest', 0)
+        if si > 20:
+            components['short_interest'] = 75
+        elif si > 10:
+            components['short_interest'] = 60
+        elif si > 5:
+            components['short_interest'] = 50
+        else:
+            components['short_interest'] = 45
+
+        # FCF Quality for medium term
+        components['fcf_quality_mt'] = data.get('fcf_quality', 50)
+
+        # VIX Regime
+        components['vix_regime'] = data.get('vix_regime', 50)
 
         # === ESPECULATIVO ===
 
@@ -740,6 +824,29 @@ class MultiHorizonScorer:
         # Earnings Stability
         earnings_stability = data.get('earnings_stability', 50)  # 0-100
         components['earnings_stability'] = earnings_stability
+
+        # === PROFESSIONAL VARIABLES ===
+
+        # FCF Quality: FCF / Net Income ratio
+        components['fcf_quality'] = data.get('fcf_quality', 50)
+
+        # VIX Regime context for long-term
+        components['vix_regime'] = data.get('vix_regime', 50)
+
+        # Mean reversion for LT (light weight)
+        mom_6m_raw = data.get('momentum_6m', 0)
+        if mom_6m_raw < -20:
+            components['mean_reversion'] = 80  # Deep value opportunity
+        elif mom_6m_raw < -10:
+            components['mean_reversion'] = 65
+        elif mom_6m_raw > 30:
+            components['mean_reversion'] = 30  # Extended
+        else:
+            components['mean_reversion'] = 50
+
+        # Sector RS — INVERTED for LT
+        sr = data.get('sector_rs', 50)
+        components['sector_rs'] = max(10, min(90, 100 - sr))
 
         # === ESPECULATIVO ===
 

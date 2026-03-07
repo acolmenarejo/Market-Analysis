@@ -6,6 +6,7 @@ Centraliza la obtención de datos dinámicos de todas las fuentes.
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import yfinance as yf
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
@@ -578,6 +579,18 @@ def _batch_download_prices(tickers: List[str]) -> dict:
                 except Exception:
                     continue
 
+    # Fallback: individually download missing tickers (batch sometimes silently drops some)
+    missing = [t for t in tickers if t not in all_hist_data]
+    if missing:
+        for t in missing[:30]:  # Cap at 30 to avoid rate limiting
+            try:
+                h = yf.Ticker(t).history(period="6mo")
+                if not h.empty and 'Close' in h.columns:
+                    all_hist_data[t] = h
+            except Exception:
+                continue
+            _time.sleep(0.2)  # Small delay between individual calls
+
     return all_hist_data
 
 
@@ -604,6 +617,110 @@ def _batch_download_info(tickers: List[str]) -> dict:
                 all_info[futures[future]] = {}
 
     return all_info
+
+
+# ========== Professional Scoring Helper Functions ==========
+
+def _calc_iv_percentile_from_hist(hist: pd.DataFrame) -> float:
+    """Historical volatility percentile using price data (no extra API calls).
+    Compares current 20-day realized vol to its 1-year range."""
+    try:
+        if hist is None or len(hist) < 60:
+            return 50.0
+        close = hist['Close']
+        returns = close.pct_change().dropna()
+        if len(returns) < 60:
+            return 50.0
+        # 20-day rolling realized vol (annualized)
+        rolling_vol = returns.rolling(20).std() * np.sqrt(252)
+        rolling_vol = rolling_vol.dropna()
+        if len(rolling_vol) < 20:
+            return 50.0
+        current_vol = float(rolling_vol.iloc[-1])
+        # Percentile vs last ~6 months of rolling vol
+        from scipy.stats import percentileofscore
+        pct = percentileofscore(rolling_vol.values, current_vol, kind='rank')
+        return round(pct, 1)
+    except Exception:
+        return 50.0
+
+
+@st.cache_data(ttl=600)
+def _get_vix_level() -> float:
+    """Get current VIX level."""
+    try:
+        vix = yf.Ticker('^VIX')
+        hist = vix.history(period='5d')
+        if not hist.empty:
+            return float(hist['Close'].iloc[-1])
+    except Exception:
+        pass
+    return 20.0
+
+
+def _get_vix_regime_modifier() -> float:
+    """VIX regime modifier: returns adjustment factor.
+    VIX > 30: fear regime (score 30), VIX < 15: complacency (score 70), else proportional."""
+    vix = _get_vix_level()
+    if vix >= 35:
+        return 20.0
+    elif vix >= 30:
+        return 30.0
+    elif vix >= 25:
+        return 40.0
+    elif vix >= 20:
+        return 50.0
+    elif vix >= 15:
+        return 60.0
+    else:
+        return 70.0
+
+
+def _calc_sector_relative_strength(ticker_momentum_3m: float, sector: str,
+                                     all_hist_data: dict, tickers: list,
+                                     all_info_data: dict) -> float:
+    """Ticker's 3-month return minus sector average. Returns 0-100 score."""
+    try:
+        sector_momentums = []
+        for t in tickers:
+            t_info = all_info_data.get(t, {})
+            if (t_info.get('sector', '') or '') == sector:
+                t_hist = all_hist_data.get(t)
+                if t_hist is not None and not t_hist.empty and len(t_hist) >= 60:
+                    t_close = t_hist['Close']
+                    t_mom = ((t_close.iloc[-1] / t_close.iloc[-60]) - 1) * 100
+                    sector_momentums.append(float(t_mom))
+        if not sector_momentums:
+            return 50.0
+        sector_avg = sum(sector_momentums) / len(sector_momentums)
+        diff = ticker_momentum_3m - sector_avg
+        # Scale: +20% outperformance = 90, -20% = 10
+        score = 50 + (diff / 20) * 40
+        return max(5, min(95, score))
+    except Exception:
+        return 50.0
+
+
+def _calc_fcf_quality(info: dict) -> float:
+    """FCF / Net Income ratio. >1.0 = high quality (90), <0.5 = concern (30)."""
+    try:
+        fcf = info.get('freeCashflow', 0) or 0
+        net_income = info.get('netIncomeToCommon', 0) or 0
+        if net_income <= 0 or fcf <= 0:
+            return 40.0
+        ratio = fcf / net_income
+        if ratio >= 1.5:
+            return 90.0
+        elif ratio >= 1.0:
+            return 75.0
+        elif ratio >= 0.7:
+            return 60.0
+        elif ratio >= 0.5:
+            return 45.0
+        else:
+            return 30.0
+    except Exception:
+        return 50.0
 
 
 @st.cache_data(ttl=600, show_spinner="Computing scores...")  # 10 min
@@ -787,6 +904,14 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                     'rsi_bullish_crossover': rsi_crossover_data.get('bullish_crossover', False),
                     'konkorde_divergence_score': konkorde_div_data.get('divergence_score', 50),
                     'konkorde_bullish_divergence': konkorde_div_data.get('bullish_divergence', False),
+                    # Professional scoring variables
+                    'iv_percentile': _calc_iv_percentile_from_hist(hist),
+                    'skew_score': 50,  # Default; enhanced via options data when available
+                    'vix_regime': _get_vix_regime_modifier(),
+                    'sector_rs': _calc_sector_relative_strength(
+                        float(momentum_3m), sector, all_hist_data, tickers, all_info_data),
+                    'short_interest': (info.get('shortPercentOfFloat', 0) or 0) * 100,
+                    'fcf_quality': _calc_fcf_quality(info),
                 }
 
                 result = scorer.calculate_all_horizons(scoring_data)
@@ -1328,6 +1453,7 @@ def get_global_futures() -> Dict[str, Dict]:
         'SOL-USD':   {'name': 'Solana',         'region': 'Global', 'type': 'crypto'},
         # Volatility
         '^VIX':      {'name': 'VIX',            'region': 'US',     'type': 'volatility'},
+        '^MOVE':     {'name': 'MOVE',           'region': 'US',     'type': 'volatility'},
     }
 
     tickers = list(INSTRUMENTS.keys())
@@ -1819,7 +1945,7 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
                     p_df = chain.puts.copy()
                     for _df in [c_df, p_df]:
                         if 'openInterest' in _df.columns:
-                            _df['openInterest'] = _df['openInterest'].fillna(0).astype(float)
+                            _df['openInterest'] = pd.to_numeric(_df['openInterest'], errors='coerce').fillna(0)
                         else:
                             _df['openInterest'] = 0.0
 

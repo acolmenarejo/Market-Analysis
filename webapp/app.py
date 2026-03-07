@@ -13,6 +13,7 @@ Run: streamlit run webapp/app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
+import yfinance as yf
 import sys
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -643,14 +644,30 @@ st.markdown("""
         padding: 0 !important;
         margin: 0 !important;
     }
+    html, body {
+        background-color: #0d1117 !important;
+    }
     .stApp {
         margin-top: 0 !important;
         padding-top: 0 !important;
         background-color: #0d1117 !important;
     }
     .stApp > header { background-color: #0d1117 !important; }
-    [data-testid="stAppViewContainer"] { background-color: #0d1117 !important; }
-    .main, section.main { background-color: #0d1117 !important; min-height: 100vh; }
+    [data-testid="stAppViewContainer"],
+    [data-testid="stApp"],
+    [data-testid="stAppViewContainer"] > div {
+        background-color: #0d1117 !important;
+    }
+    .main, section.main {
+        background-color: #0d1117 !important;
+        min-height: 100vh !important;
+    }
+    .appview-container {
+        background-color: #0d1117 !important;
+    }
+    [data-testid="stAppViewBlockContainer"] {
+        background-color: #0d1117 !important;
+    }
     .st-emotion-cache-zy6yx3 { padding: 0rem 1rem 10rem !important; }
     [data-testid="stAppViewContainer"],
     [data-testid="stAppViewContainer"] > div,
@@ -1305,18 +1322,96 @@ def _heatmap_color(change_pct: float) -> str:
 
 # Sector groupings for heatmap
 SECTOR_MAP = {
-    'Big Tech': ['AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN', 'NVDA', 'TSLA', 'NFLX'],
-    'Semiconductors': ['AVGO', 'AMD', 'INTC', 'QCOM', 'MU', 'ASML', 'TSM', 'AMAT', 'LRCX', 'MRVL'],
-    'Software': ['CRM', 'ORCL', 'IBM', 'NOW', 'ADBE', 'PLTR', 'SNOW', 'DDOG', 'ZS', 'CRWD'],
-    'Fintech': ['V', 'MA', 'PYPL', 'SQ', 'COIN', 'HOOD'],
-    'Banks': ['JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'SCHW', 'BLK'],
-    'Healthcare': ['UNH', 'JNJ', 'PFE', 'MRK', 'ABBV', 'LLY', 'GILD', 'BMY', 'AMGN', 'REGN', 'MRNA', 'VRTX'],
-    'Consumer': ['PG', 'KO', 'PEP', 'WMT', 'COST', 'HD', 'MCD', 'NKE', 'SBUX', 'TGT', 'LOW'],
-    'Energy': ['XOM', 'CVX', 'COP', 'SLB', 'EOG', 'OXY'],
-    'Defense': ['LMT', 'RTX', 'NOC', 'GD', 'BA', 'HII'],
-    'Industrials': ['CAT', 'DE', 'UNP', 'UPS', 'FDX', 'HON'],
-    'Telecom/Media': ['VZ', 'T', 'TMUS', 'DIS', 'CMCSA', 'CHTR'],
-    'Other': ['UBER', 'ABNB', 'SHOP', 'SPOT', 'AMT', 'PLD', 'NEE', 'DUK', 'SO'],
+    'Big Tech': [
+        'AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN', 'NVDA', 'TSLA', 'NFLX',
+        # International
+        'SAP.DE', '9984.T', '0700.HK', '9988.HK', '3690.HK',
+    ],
+    'Semiconductors': [
+        'AVGO', 'AMD', 'INTC', 'QCOM', 'MU', 'TSM', 'AMAT', 'LRCX', 'MRVL', 'ARM', 'SMCI',
+        # International
+        'ASML.AS', 'IFX.DE', '6861.T', '005930.KS', '000660.KS',
+    ],
+    'Software/Cloud': [
+        'CRM', 'ORCL', 'IBM', 'NOW', 'ADBE', 'PLTR', 'SNOW', 'DDOG', 'ZS', 'CRWD',
+        'PANW', 'NET', 'TTD', 'HUBS', 'WDAY', 'TEAM', 'ZM', 'DOCU',
+        # International
+        'TCS.NS', 'INFY.NS', '035420.KS',
+    ],
+    'Banks/Finance': [
+        'JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'SCHW', 'BLK',
+        'V', 'MA', 'PYPL', 'XYZ', 'COIN', 'HOOD', 'SOFI', 'AFRM', 'UPST',
+        # International
+        'HSBA.L', 'BARC.L', 'LLOY.L', 'LSEG.L',
+        'BBVA.MC', 'SAN.MC',
+        'ALV.DE', 'MUV2.DE',
+        '8306.T', '1299.HK', '0005.HK', '2318.HK',
+        'HDFCBANK.NS', 'ICICIBANK.NS',
+        'ITUB4.SA', 'BBDC4.SA',
+        'GGAL',
+        'INGA.AS',
+        'ISP.MI', 'UCG.MI',
+        'SAN.PA',
+        'UBSG.SW',
+        '601318.SS', '600036.SS',
+        'CBA.AX',
+    ],
+    'Healthcare': [
+        'UNH', 'JNJ', 'PFE', 'MRK', 'ABBV', 'LLY', 'GILD', 'BMY', 'AMGN', 'REGN', 'MRNA', 'VRTX',
+        # International
+        'AZN.L', 'GSK.L',
+        'ROG.SW', 'NOVN.SW',
+        'CSL.AX',
+        '4063.T',
+    ],
+    'Consumer': [
+        'PG', 'KO', 'PEP', 'WMT', 'COST', 'HD', 'MCD', 'NKE', 'SBUX', 'TGT', 'LOW',
+        'UBER', 'ABNB', 'SHOP', 'SPOT', 'RBLX', 'SNAP', 'PINS', 'ROKU',
+        # International
+        'ULVR.L', 'DGE.L',
+        'NESN.SW',
+        'MC.PA', 'OR.PA', 'KER.PA', 'EL.PA', 'BN.PA',
+        'ITX.MC',
+        'ADS.DE',
+        'MELI', 'SE', 'GRAB',
+        'ABEV3.SA', 'WALMEX.MX', 'FEMSAUBD.MX',
+        'UNA.AS', 'PHIA.AS',
+        '9999.HK',
+        '600519.SS',
+    ],
+    'Energy': [
+        'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'OXY',
+        # International
+        'SHEL.L', 'BP.L', 'RIO.L',
+        'TTE.PA',
+        'ENI.MI',
+        'PETR4.SA', 'VALE3.SA', 'YPF',
+        'BHP.AX', 'WDS.AX',
+        'BAS.DE',
+        'RELIANCE.NS',
+    ],
+    'Industrials/Defense': [
+        'LMT', 'RTX', 'NOC', 'GD', 'BA', 'HII',
+        'CAT', 'DE', 'UNP', 'UPS', 'FDX', 'HON',
+        # International
+        'SIE.DE', 'AIR.DE', 'MBG.DE', 'BMW.DE',
+        '7203.T', '6902.T', '7267.T',
+        'WEGE3.SA',
+        'RIVN', 'LCID',
+        'SU.PA', 'AI.PA', 'CS.PA',
+        'IBE.MC',
+    ],
+    'Telecom/Media': [
+        'VZ', 'T', 'TMUS', 'DIS', 'CMCSA', 'CHTR',
+        # International
+        'DTE.DE', 'TEF.MC',
+        'REL.L',
+        '6758.T',
+        'AMXL.MX',
+    ],
+    'REITs/Utilities': [
+        'AMT', 'PLD', 'NEE', 'DUK', 'SO',
+    ],
 }
 
 
@@ -1390,6 +1485,115 @@ def _render_futures_board(futures_data: dict) -> str:
     </div>'''
 
     return html
+
+
+def _render_credit_stress_monitor(gf: dict):
+    """Credit & Macro Stress Monitor — tracks credit spreads, volatility divergence, safe havens."""
+    # Fetch credit ETFs
+    credit_tickers = ['HYG', 'LQD', 'JNK', 'TLT', 'SHY', 'GLD']
+    try:
+        credit_data = yf.download(credit_tickers, period='5d', group_by='ticker',
+                                   auto_adjust=True, threads=True, progress=False)
+        credit_prices = {}
+        if not credit_data.empty:
+            for t in credit_tickers:
+                try:
+                    if credit_data.columns.nlevels > 1 and t in credit_data.columns.get_level_values(0):
+                        df = credit_data[t].dropna(how='all')
+                        if len(df) >= 2:
+                            price = float(df['Close'].iloc[-1])
+                            prev = float(df['Close'].iloc[-2])
+                            chg = (price / prev - 1) * 100 if prev > 0 else 0
+                            credit_prices[t] = {'price': price, 'change': chg}
+                except Exception:
+                    continue
+    except Exception:
+        credit_prices = {}
+
+    # Get VIX and MOVE from global futures data
+    vix_data = gf.get('^VIX', {})
+    move_data = gf.get('^MOVE', {})
+    vix_val = vix_data.get('price', 0)
+    move_val = move_data.get('price', 0)
+    vix_chg = vix_data.get('change', 0)
+    move_chg = move_data.get('change', 0)
+
+    # Stress level calculation
+    stress_score = 0
+    stress_signals = []
+
+    if vix_val > 30:
+        stress_score += 30
+        stress_signals.append(('VIX > 30: Equity fear regime', '#f85149'))
+    elif vix_val > 25:
+        stress_score += 15
+        stress_signals.append(('VIX elevated (>25)', '#d29922'))
+
+    if move_val > 120:
+        stress_score += 30
+        stress_signals.append(('MOVE > 120: Rates vol crisis', '#f85149'))
+    elif move_val > 100:
+        stress_score += 15
+        stress_signals.append(('MOVE elevated (>100): Rates stress', '#d29922'))
+
+    # VIX-MOVE divergence
+    if move_val > 100 and vix_val < 20:
+        stress_score += 20
+        stress_signals.append(('VIX-MOVE divergence: Credit stress not priced in equities', '#f85149'))
+
+    # Credit ETF signals
+    hyg = credit_prices.get('HYG', {})
+    lqd = credit_prices.get('LQD', {})
+    if hyg.get('change', 0) < -1:
+        stress_score += 15
+        stress_signals.append((f'HYG (High Yield) down {hyg["change"]:.1f}%: Credit spread widening', '#f85149'))
+    if lqd.get('change', 0) < -1:
+        stress_score += 10
+        stress_signals.append((f'LQD (IG Credit) down {lqd["change"]:.1f}%: Investment grade stress', '#d29922'))
+
+    # GLD safe haven
+    gld = credit_prices.get('GLD', {})
+    if gld.get('change', 0) > 1.5:
+        stress_signals.append((f'Gold up {gld["change"]:.1f}%: Safe haven bid', '#d29922'))
+
+    stress_level = 'LOW' if stress_score < 20 else ('MODERATE' if stress_score < 40 else ('HIGH' if stress_score < 60 else 'CRITICAL'))
+    stress_color = '#3fb950' if stress_score < 20 else ('#d29922' if stress_score < 40 else ('#f0883e' if stress_score < 60 else '#f85149'))
+
+    st.markdown(f"""<div class="section-header">
+        <span class="section-icon">🏦</span>
+        <h3>Credit & Macro Stress</h3>
+        <span class="section-badge" style="background:{stress_color}22;color:{stress_color};border-color:{stress_color};">{stress_level}</span>
+    </div>""", unsafe_allow_html=True)
+
+    # Metrics row
+    cols = st.columns(6)
+    metrics = [
+        ('VIX', vix_val, vix_chg, '#f85149'),
+        ('MOVE', move_val, move_chg, '#d29922'),
+        ('HYG', hyg.get('price', 0), hyg.get('change', 0), '#58a6ff'),
+        ('LQD', lqd.get('price', 0), lqd.get('change', 0), '#bc8cff'),
+        ('TLT', credit_prices.get('TLT', {}).get('price', 0), credit_prices.get('TLT', {}).get('change', 0), '#3fb950'),
+        ('Gold', gld.get('price', 0), gld.get('change', 0), '#d29922'),
+    ]
+    for i, (name, price, chg, color) in enumerate(metrics):
+        with cols[i]:
+            if price > 0:
+                chg_color = '#f85149' if (name in ('VIX', 'MOVE') and chg > 0) or (name not in ('VIX', 'MOVE') and chg < 0) else '#3fb950'
+                arrow = '▲' if chg >= 0 else '▼'
+                st.markdown(f"""<div style="background:#161b22;border:1px solid #21262d;border-radius:6px;padding:6px 8px;text-align:center;">
+                    <div style="font-size:0.55rem;color:{color};font-weight:600;text-transform:uppercase;">{name}</div>
+                    <div style="font-size:0.85rem;color:#e6edf3;font-weight:700;">{'&#36;' if name in ('HYG','LQD','TLT','Gold') else ''}{price:.1f}</div>
+                    <div style="font-size:0.55rem;color:{chg_color};font-weight:600;">{arrow}{chg:+.2f}%</div>
+                </div>""", unsafe_allow_html=True)
+
+    # Alerts
+    if stress_signals:
+        alerts_html = ""
+        for msg, color in stress_signals:
+            alerts_html += f'<div style="padding:3px 8px;margin:2px 0;border-left:3px solid {color};font-size:0.7rem;color:#e6edf3;">{msg}</div>'
+        st.markdown(f'<div style="background:#161b22;border:1px solid #21262d;border-radius:6px;padding:6px;margin-top:4px;">{alerts_html}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div style="padding:6px;font-size:0.7rem;color:#3fb950;">No credit stress signals detected</div>', unsafe_allow_html=True)
 
 
 def _render_sector_heatmap(ticker_changes: dict) -> str:
@@ -1483,6 +1687,20 @@ def _svg_score_ring(score: float, size: int = 60) -> str:
 def main():
     init_session_state()
 
+    # Background cache warming — pre-load scores after dashboard loads
+    if 'cache_warmed' not in st.session_state:
+        st.session_state.cache_warmed = True
+        import threading
+        def _warm():
+            import time as _t
+            _t.sleep(30)  # Wait for dashboard to finish loading first
+            try:
+                from webapp.data.providers import warm_cache
+                warm_cache(TICKER_UNIVERSE)
+            except Exception:
+                pass
+        threading.Thread(target=_warm, daemon=True).start()
+
     pages = [
         "🏠 Dashboard",
         "📊 Stock Analysis",
@@ -1570,6 +1788,10 @@ def main():
             st.rerun()
 
     page = pages[min(st.session_state.current_page_index, len(pages) - 1)]
+
+    # Force dark background before any page content renders
+    st.markdown("""<div style="position:fixed;top:0;left:0;width:100vw;height:100vh;
+        background-color:#0d1117;z-index:-1;"></div>""", unsafe_allow_html=True)
 
     # Main content
     if "Dashboard" in page:
@@ -1905,6 +2127,7 @@ def show_dashboard():
             ('GBP/USD',     'GBPUSD=X', None,       '#58a6ff'),
             ('USD/JPY',     'JPY=X',    None,       '#f0883e'),
             ('VIX',         '^VIX',     None,       '#f85149'),
+            ('MOVE',        '^MOVE',    None,       '#d29922'),
             ('Bitcoin',     'BTC-USD',  None,       '#f0883e'),
             ('Ethereum',    'ETH-USD',  None,       '#bc8cff'),
             ('Solana',      'SOL-USD',  None,       '#39d2c0'),
@@ -1932,7 +2155,7 @@ def show_dashboard():
         def _chg_html(chg, sym=''):
             """Format change % with color and arrow."""
             is_rate = gf.get(sym, {}).get('type', '') == 'rate'
-            is_vix = 'VIX' in sym
+            is_vix = 'VIX' in sym or 'MOVE' in sym
             if is_rate or is_vix:
                 c = '#f85149' if chg >= 0 else '#3fb950'
             else:
@@ -1944,7 +2167,7 @@ def show_dashboard():
         # Group rows by category for visual separation
         _categories = [
             ('US INDICES', 0, 4), ('EU / ASIA', 4, 8), ('COMMODITIES', 8, 13),
-            ('RATES', 13, 17), ('FX & VOL', 17, 22), ('CRYPTO', 22, 25),
+            ('RATES', 13, 17), ('FX & VOL', 17, 23), ('CRYPTO', 23, 26),
         ]
 
         grid_html = '<div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:4px;">'
@@ -2078,6 +2301,11 @@ def show_dashboard():
     alerts = risk_data.get('alerts', [])
 
     _show_risk_command_center(risk_data, module_scores, crash_probs, score, regime, regime_color, alerts, go)
+
+    # =========================================================================
+    # SECTION C2: CREDIT & MACRO STRESS MONITOR
+    # =========================================================================
+    _render_credit_stress_monitor(gf)
 
     # =========================================================================
     # SECTION D: SECTOR HEATMAP
@@ -3297,13 +3525,20 @@ def _show_options_tab(ticker: str, data: dict):
         multi_exp = st.checkbox("Multi-Exp GEX", value=True, key=f"multi_gex_{ticker}",
                                 help="Aggregate gamma across nearest 4 expirations for stronger signal")
 
-    try:
-        chain = stock.option_chain(selected_exp)
-        calls = chain.calls.copy()
-        puts = chain.puts.copy()
-    except Exception as e:
-        st.error(f"Error: {e}")
-        return
+    chain = None
+    for _retry in range(3):
+        try:
+            chain = stock.option_chain(selected_exp)
+            break
+        except Exception as e:
+            if _retry < 2:
+                import time as _time
+                _time.sleep(2 * (_retry + 1))
+            else:
+                st.error(f"Error loading options: {e}")
+                return
+    calls = chain.calls.copy()
+    puts = chain.puts.copy()
 
     if calls.empty and puts.empty:
         st.warning("No hay datos de opciones para esta expiracion.")
@@ -3313,7 +3548,7 @@ def _show_options_tab(ticker: str, data: dict):
     for df in [calls, puts]:
         for col in ['openInterest', 'volume']:
             if col in df.columns:
-                df[col] = df[col].fillna(0).astype(float)
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             else:
                 df[col] = 0.0
 
@@ -3796,7 +4031,7 @@ def _show_options_tab(ticker: str, data: dict):
                 p_df = ch.puts[(ch.puts['strike'] >= strike_range[0]) & (ch.puts['strike'] <= strike_range[1])].copy()
                 for df_ in [c_df, p_df]:
                     if 'openInterest' in df_.columns:
-                        df_['openInterest'] = df_['openInterest'].fillna(0).astype(float)
+                        df_['openInterest'] = pd.to_numeric(df_['openInterest'], errors='coerce').fillna(0)
                     else:
                         df_['openInterest'] = 0.0
 
@@ -4029,7 +4264,7 @@ def _show_options_tab(ticker: str, data: dict):
                     p_df_i = ch_i.puts[(ch_i.puts['strike'] >= strike_range[0]) & (ch_i.puts['strike'] <= strike_range[1])].copy()
                     for df_ in [c_df_i, p_df_i]:
                         if 'openInterest' in df_.columns:
-                            df_['openInterest'] = df_['openInterest'].fillna(0).astype(float)
+                            df_['openInterest'] = pd.to_numeric(df_['openInterest'], errors='coerce').fillna(0)
                         else:
                             df_['openInterest'] = 0.0
 
@@ -5113,6 +5348,148 @@ def show_score_page():
     st.download_button("Export CSV", data=csv,
                        file_name=f"scores_{datetime.now().strftime('%Y%m%d')}.csv",
                        mime="text/csv", key="score_csv_export")
+
+    # =========================================================================
+    # BACKTESTING VALIDATION SECTION
+    # =========================================================================
+    st.markdown("---")
+    with st.expander("Backtesting Validation (last 2 years, 25 liquid US stocks)", expanded=False):
+        _render_backtest_results()
+
+
+@st.cache_data(ttl=86400, show_spinner="Running backtest...")
+def _run_backtest_cached(horizon: str = 'short_term') -> dict:
+    """Cached wrapper for backtesting."""
+    from webapp.scoring.backtester import run_backtest_cached
+    return run_backtest_cached(horizon)
+
+
+def _render_backtest_results():
+    """Render backtesting validation results in Score page."""
+    hz_col, run_col = st.columns([2, 1])
+    with hz_col:
+        bt_horizon = st.selectbox("Backtest Horizon",
+                                   ["short_term", "medium_term", "long_term"],
+                                   format_func=lambda x: {"short_term": "Short Term (5-day hold)",
+                                                           "medium_term": "Medium Term (21-day hold)",
+                                                           "long_term": "Long Term (63-day hold)"}[x],
+                                   key="bt_horizon")
+
+    report = _run_backtest_cached(bt_horizon)
+
+    if not report:
+        st.warning("Backtest could not be computed. Try again later.")
+        return
+
+    metrics = report.get('metrics', {})
+    signal_stats = metrics.get('signal_stats', {})
+    equity = report.get('equity_curve')
+    benchmark = report.get('benchmark_curve')
+    factor_attr = report.get('factor_attribution', {})
+
+    # Summary metrics row
+    m1, m2, m3, m4, m5 = st.columns(5)
+    with m1:
+        st.metric("Sharpe Ratio", f"{metrics.get('sharpe_ratio', 0):.2f}")
+    with m2:
+        st.metric("Max Drawdown", f"{metrics.get('max_drawdown', 0):.1f}%")
+    with m3:
+        st.metric("Win Rate", f"{metrics.get('win_rate', 0):.0f}%")
+    with m4:
+        st.metric("Profit Factor", f"{metrics.get('profit_factor', 0):.2f}")
+    with m5:
+        st.metric("Alpha vs SPY", f"{metrics.get('alpha_vs_spy', 0):+.1f}%")
+
+    # Equity curve chart
+    if equity is not None and benchmark is not None and len(equity) > 0:
+        st.markdown("#### Equity Curve: Portfolio vs SPY")
+        import plotly.graph_objects as go
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=equity.index, y=equity.values,
+                                  name='STRONG BUY Portfolio', line=dict(color='#3fb950', width=2)))
+        fig.add_trace(go.Scatter(x=benchmark.index, y=benchmark.values,
+                                  name='SPY Benchmark', line=dict(color='#58a6ff', width=2, dash='dot')))
+        fig.update_layout(
+            template='plotly_dark',
+            paper_bgcolor='#0d1117',
+            plot_bgcolor='#161b22',
+            height=350,
+            margin=dict(l=40, r=20, t=30, b=30),
+            legend=dict(orientation='h', y=1.1),
+            yaxis_title='Value (base 100)',
+        )
+        st.plotly_chart(fig, use_container_width=True, key="bt_equity_chart")
+
+    # Signal accuracy table
+    if signal_stats:
+        st.markdown("#### Signal Accuracy")
+        rows_html = ""
+        for signal in ['STRONG_BUY', 'BUY', 'HOLD', 'SELL']:
+            stats = signal_stats.get(signal, {})
+            if not stats:
+                continue
+            hit = stats.get('hit_rate', 0)
+            hit_color = '#3fb950' if hit >= 60 else ('#d29922' if hit >= 50 else '#f85149')
+            avg_ret = stats.get('avg_return', 0)
+            ret_color = '#3fb950' if avg_ret > 0 else '#f85149'
+            rows_html += f"""<tr>
+                <td style="font-weight:600;">{signal.replace('_', ' ')}</td>
+                <td style="color:{hit_color};font-weight:600;">{hit:.0f}%</td>
+                <td style="color:{ret_color};">{avg_ret:+.2f}%</td>
+                <td>{stats.get('median_return', 0):+.2f}%</td>
+                <td>{stats.get('count', 0)}</td>
+                <td style="color:#3fb950;">{stats.get('best', 0):+.1f}%</td>
+                <td style="color:#f85149;">{stats.get('worst', 0):+.1f}%</td>
+            </tr>"""
+
+        st.markdown(f"""
+        <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+            <thead><tr style="border-bottom:1px solid #30363d;">
+                <th style="text-align:left;padding:6px;color:#8b949e;">Signal</th>
+                <th style="text-align:left;padding:6px;color:#8b949e;">Hit Rate</th>
+                <th style="text-align:left;padding:6px;color:#8b949e;">Avg Return</th>
+                <th style="text-align:left;padding:6px;color:#8b949e;">Median</th>
+                <th style="text-align:left;padding:6px;color:#8b949e;">Count</th>
+                <th style="text-align:left;padding:6px;color:#8b949e;">Best</th>
+                <th style="text-align:left;padding:6px;color:#8b949e;">Worst</th>
+            </tr></thead>
+            <tbody>{rows_html}</tbody>
+        </table></div>
+        """, unsafe_allow_html=True)
+
+    # Factor attribution (score quintiles)
+    if factor_attr:
+        st.markdown("#### Factor Attribution (Score Quintile Analysis)")
+        fa_rows = ""
+        for quintile in ['Q1(Low)', 'Q2', 'Q3', 'Q4', 'Q5(High)']:
+            fa = factor_attr.get(quintile, {})
+            if not fa:
+                continue
+            avg_r = fa.get('avg_return', 0)
+            r_color = '#3fb950' if avg_r > 0 else '#f85149'
+            fa_rows += f"""<tr>
+                <td>{quintile}</td>
+                <td style="color:{r_color};">{avg_r:+.2f}%</td>
+                <td>{fa.get('hit_rate', 0):.0f}%</td>
+                <td>{fa.get('count', 0)}</td>
+            </tr>"""
+
+        st.markdown(f"""
+        <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+            <thead><tr style="border-bottom:1px solid #30363d;">
+                <th style="text-align:left;padding:6px;color:#8b949e;">Score Quintile</th>
+                <th style="text-align:left;padding:6px;color:#8b949e;">Avg Forward Return</th>
+                <th style="text-align:left;padding:6px;color:#8b949e;">Hit Rate</th>
+                <th style="text-align:left;padding:6px;color:#8b949e;">Trades</th>
+            </tr></thead>
+            <tbody>{fa_rows}</tbody>
+        </table></div>
+        """, unsafe_allow_html=True)
+
+    st.caption(f"Total trades analyzed: {metrics.get('total_trades', 0)} | "
+               f"Avg return per trade: {metrics.get('avg_return', 0):+.2f}%")
 
 
 # =============================================================================
