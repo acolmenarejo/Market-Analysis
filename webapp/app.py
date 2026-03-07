@@ -1789,9 +1789,18 @@ def main():
 
     page = pages[min(st.session_state.current_page_index, len(pages) - 1)]
 
-    # Force dark background before any page content renders
-    st.markdown("""<div style="position:fixed;top:0;left:0;width:100vw;height:100vh;
-        background-color:#0d1117;z-index:-1;"></div>""", unsafe_allow_html=True)
+    # Force dark background — cover any previous page content during transition
+    st.markdown("""<style>
+        /* Ensure all streamlit containers have dark bg during page load */
+        .stApp, [data-testid="stAppViewContainer"],
+        [data-testid="stAppViewBlockContainer"],
+        .main, section.main, .appview-container,
+        [data-testid="stVerticalBlock"] {
+            background-color: #0d1117 !important;
+        }
+        /* Prevent any iframe/video flash between pages */
+        iframe { background-color: #0d1117 !important; }
+    </style>""", unsafe_allow_html=True)
 
     # Main content
     if "Dashboard" in page:
@@ -5487,6 +5496,44 @@ def _render_backtest_results():
             <tbody>{fa_rows}</tbody>
         </table></div>
         """, unsafe_allow_html=True)
+
+    # --- Macro Regime Analysis ---
+    regime_stats = metrics.get('regime_stats', {})
+    if regime_stats:
+        st.markdown("**Macro Regime Analysis** (VIX-based)")
+        regime_rows = ""
+        regime_icons = {'low_vol': '🟢', 'normal': '🔵', 'high_vol': '🟡', 'crisis': '🔴'}
+        regime_labels = {'low_vol': 'Low Vol (VIX&lt;15)', 'normal': 'Normal (15-25)',
+                         'high_vol': 'High Vol (25-35)', 'crisis': 'Crisis (VIX&gt;35)'}
+        for regime in ['low_vol', 'normal', 'high_vol', 'crisis']:
+            rs = regime_stats.get(regime, {})
+            if rs.get('count', 0) == 0:
+                continue
+            avg_r = rs.get('avg_return', 0)
+            wr = rs.get('win_rate', 0)
+            cnt = rs.get('count', 0)
+            r_color = '#3fb950' if avg_r > 0 else '#f85149'
+            icon = regime_icons.get(regime, '')
+            label = regime_labels.get(regime, regime)
+            regime_rows += f"""<tr style="border-bottom:1px solid #21262d;">
+                <td style="padding:6px;color:#e6edf3;">{icon} {label}</td>
+                <td style="padding:6px;color:{r_color};">{avg_r:+.2f}%</td>
+                <td style="padding:6px;color:#e6edf3;">{wr:.0f}%</td>
+                <td style="padding:6px;color:#8b949e;">{cnt}</td>
+            </tr>"""
+        if regime_rows:
+            st.markdown(f"""
+            <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+                <thead><tr style="border-bottom:1px solid #30363d;">
+                    <th style="text-align:left;padding:6px;color:#8b949e;">VIX Regime</th>
+                    <th style="text-align:left;padding:6px;color:#8b949e;">Avg Return</th>
+                    <th style="text-align:left;padding:6px;color:#8b949e;">Win Rate</th>
+                    <th style="text-align:left;padding:6px;color:#8b949e;">Trades</th>
+                </tr></thead>
+                <tbody>{regime_rows}</tbody>
+            </table></div>
+            """, unsafe_allow_html=True)
 
     st.caption(f"Total trades analyzed: {metrics.get('total_trades', 0)} | "
                f"Avg return per trade: {metrics.get('avg_return', 0):+.2f}%")

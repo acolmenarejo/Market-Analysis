@@ -772,9 +772,16 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                 bb_upper = sma20 + (std20 * 2)
                 bb_lower = sma20 - (std20 * 2)
                 current_price = float(close.iloc[-1])
-                if current_price > float(bb_upper.iloc[-1] if not bb_upper.empty else 0):
+                try:
+                    _bb_up = float(bb_upper.iloc[-1]) if not bb_upper.empty else current_price * 1.1
+                    _bb_lo = float(bb_lower.iloc[-1]) if not bb_lower.empty else current_price * 0.9
+                    if pd.isna(_bb_up): _bb_up = current_price * 1.1
+                    if pd.isna(_bb_lo): _bb_lo = current_price * 0.9
+                except (TypeError, ValueError):
+                    _bb_up, _bb_lo = current_price * 1.1, current_price * 0.9
+                if current_price > _bb_up:
                     bb_position_num, vp_position = 85, 'near_resistance'
-                elif current_price < float(bb_lower.iloc[-1] if not bb_lower.empty else 0):
+                elif current_price < _bb_lo:
                     bb_position_num, vp_position = 15, 'near_support'
                 else:
                     bb_position_num, vp_position = 50, 'neutral'

@@ -59,74 +59,76 @@ class MultiHorizonResult:
 # =============================================================================
 
 # Backtest-calibrated weights (2-year walk-forward, 25 US stocks)
-# Key finding: mean-reversion dominates at all horizons.
-# High scores must identify OVERSOLD + QUALITY setups, not extended momentum.
+# V2: Blend contrarian with quality gates. Pure contrarian creates all-buy in pullbacks.
+# Strategy: Quality fundamentals GATE the contrarian signal. Bad quality + oversold = value trap.
 
 SHORT_TERM_WEIGHTS = {
-    # Mean-reversion & Contrarian signals (40%)
-    'rsi': 0.08,                    # RSI contrarian (oversold = buy)
-    'bollinger_position': 0.07,     # Near lower BB = opportunity
-    'mean_reversion': 0.10,         # Combined RSI+momentum contrarian
-    'iv_percentile': 0.06,          # Low vol percentile = calm entry
-    'vix_regime': 0.04,             # VIX regime context
-    'skew_score': 0.05,             # Extreme put skew = contrarian buy
-
-    # Trend context (25%) — confirms healthy pullback, not breakdown
-    'rsi_crossover': 0.05,          # Oversold recovery
-    'macd': 0.05,                   # MACD cross during pullback
-    'konkorde': 0.05,               # Institutional accumulation
-    'konkorde_divergence': 0.05,    # Inst. buying while price drops
-    'trendline_breakout': 0.05,     # Trendline breakout
-
-    # Contrarian momentum (15%) — recent losers outperform
-    'momentum_1w': 0.05,            # INVERTED: negative = higher score
-    'momentum_1m': 0.06,            # INVERTED: pullback = opportunity
-    'relative_strength': 0.04,      # Underperformers catch up
-
-    # Speculative (20%)
-    'congress_score': 0.08,
-    'news_sentiment': 0.06,
-    'options_flow': 0.04,
+    # Technical signals (35%) — blend of trend + contrarian
+    'rsi': 0.06,                    # RSI contrarian (oversold = buy)
+    'macd': 0.05,                   # MACD direction
+    'bollinger_position': 0.05,     # Near lower BB = opportunity
+    'konkorde': 0.05,               # Institutional flow
+    'konkorde_divergence': 0.04,    # Inst. buying while price drops
+    'trendline_breakout': 0.04,     # Trendline breakout
+    'rsi_crossover': 0.04,          # Oversold recovery
     'volume_profile': 0.02,
+
+    # Mean-reversion (20%) — contrarian but gated by quality
+    'mean_reversion': 0.08,         # Combined RSI+momentum contrarian
+    'iv_percentile': 0.05,          # Low vol = calm entry
+    'skew_score': 0.04,             # Put skew extremes
+    'vix_regime': 0.03,
+
+    # Momentum (15%) — BLENDED: slight contrarian bias, not pure inversion
+    'momentum_1w': 0.05,            # Slight contrarian
+    'momentum_1m': 0.06,            # Slight contrarian
+    'relative_strength': 0.04,      # vs SPY
+
+    # Speculative (30%) — includes quality proxy via congress/sentiment
+    'congress_score': 0.10,
+    'news_sentiment': 0.08,
+    'options_flow': 0.06,
+    'quality_gate': 0.06,           # NEW: ROE/margin quality gate
 }
 
 MEDIUM_TERM_WEIGHTS = {
-    # Quality fundamentals (35%) — quality stocks recover faster
-    'roe': 0.09,
-    'roic': 0.09,
+    # Quality fundamentals (40%) — THE primary signal at MT
+    'roe': 0.10,
+    'roic': 0.10,
     'margin_trend': 0.07,
-    'debt_trend': 0.07,
-    'fcf_quality_mt': 0.03,
+    'debt_trend': 0.06,
+    'fcf_quality_mt': 0.04,
+    'quality_gate': 0.03,
 
-    # Mean-reversion (20%)
-    'mean_reversion': 0.08,         # Combined oversold signal
-    'sector_rs': 0.06,              # Sector laggards catch up
-    'short_interest': 0.04,         # Short squeeze potential
+    # Contrarian (15%) — secondary signal, quality-gated
+    'mean_reversion': 0.06,
+    'sector_rs': 0.04,
+    'short_interest': 0.03,
     'vix_regime': 0.02,
 
-    # Contrarian momentum (20%)
-    'momentum_3m': 0.08,            # INVERTED: recent losers
-    'momentum_6m': 0.06,            # INVERTED
-    'analyst_revisions': 0.06,      # Positive revisions still valuable
+    # Momentum (20%) — blended, NOT pure contrarian
+    'momentum_3m': 0.07,
+    'momentum_6m': 0.05,
+    'analyst_revisions': 0.05,
+    'earnings_momentum': 0.03,
 
-    # Technical context (15%)
-    'trend_strength': 0.06,
+    # Technical (10%)
+    'trend_strength': 0.05,
     'support_resistance': 0.05,
-    'earnings_momentum': 0.04,
 
-    # Speculative (10%)
-    'congress_score': 0.05,
-    'institutional_flow': 0.05,
+    # Speculative (15%)
+    'congress_score': 0.07,
+    'institutional_flow': 0.08,
 }
 
 LONG_TERM_WEIGHTS = {
-    # Value (35%) — cheap + quality = best LT returns
-    'pe_percentile': 0.08,
-    'pb_percentile': 0.05,
-    'ev_ebitda_percentile': 0.07,
-    'fcf_yield': 0.08,
-    'peg_ratio': 0.05,
-    'mean_reversion': 0.02,
+    # Value (30%)
+    'pe_percentile': 0.07,
+    'pb_percentile': 0.04,
+    'ev_ebitda_percentile': 0.06,
+    'fcf_yield': 0.07,
+    'peg_ratio': 0.04,
+    'quality_gate': 0.02,
 
     # Quality (30%)
     'roe': 0.07,
@@ -146,8 +148,10 @@ LONG_TERM_WEIGHTS = {
     'congress_long_term': 0.05,
     'insider_activity': 0.05,
 
-    # Contrarian (5%)
+    # Contrarian (8%)
+    'mean_reversion': 0.03,
     'sector_rs': 0.03,
+    'short_interest': 0.02,
 }
 
 
@@ -362,26 +366,30 @@ class MultiHorizonScorer:
         else:
             components['trendline_breakout'] = tl_score
 
-        # === CONTRARIAN MOMENTUM (backtest-calibrated: losers outperform) ===
+        # === MOMENTUM (blended: slight contrarian bias, not pure inversion) ===
 
-        # Momentum 1 week — INVERTED: recent drop = buy opportunity
+        # Momentum 1 week — blended: slight contrarian (60% contrarian, 40% trend)
         mom_1w = data.get('momentum_1w', 0)
-        components['momentum_1w'] = max(10, min(90, 50 - mom_1w * 3))
+        mom_1w_trend = max(10, min(90, 50 + mom_1w * 2))
+        mom_1w_contra = max(10, min(90, 50 - mom_1w * 2))
+        components['momentum_1w'] = mom_1w_contra * 0.6 + mom_1w_trend * 0.4
 
-        # Momentum 1 month — INVERTED: pullback = opportunity
+        # Momentum 1 month — blended
         mom_1m = data.get('momentum_1m', 0)
-        components['momentum_1m'] = max(10, min(90, 50 - mom_1m * 1.5))
+        mom_1m_trend = max(10, min(90, 50 + mom_1m * 1.2))
+        mom_1m_contra = max(10, min(90, 50 - mom_1m * 1.2))
+        components['momentum_1m'] = mom_1m_contra * 0.6 + mom_1m_trend * 0.4
 
-        # Relative Strength vs SPY — INVERTED: underperformers catch up
+        # Relative Strength vs SPY — blended
         rs = data.get('relative_strength_1m', 0)
-        if rs < -5:
-            components['relative_strength'] = 80  # Laggard = buy
-        elif rs < 0:
-            components['relative_strength'] = 65
-        elif rs < 5:
-            components['relative_strength'] = 45
+        if rs > 5:
+            components['relative_strength'] = 55   # Slight positive (trend)
+        elif rs > 0:
+            components['relative_strength'] = 60   # Neutral positive
+        elif rs > -5:
+            components['relative_strength'] = 55   # Slight laggard (contrarian)
         else:
-            components['relative_strength'] = 30  # Extended = risk
+            components['relative_strength'] = 65   # Deep laggard (contrarian buy)
 
         # === MEAN REVERSION SIGNAL ===
         rsi_val = data.get('rsi_14', 50)
@@ -429,9 +437,23 @@ class MultiHorizonScorer:
         components['vix_regime'] = data.get('vix_regime', 50)
 
         # Skew Score: from 25Δ risk reversal
-        # High put skew percentile (>80) = contrarian buy; low = complacency
         skew = data.get('skew_score', 50)
         components['skew_score'] = skew
+
+        # Quality Gate: ROE + margin composite. High quality = safe to buy dip
+        # Low quality + oversold = VALUE TRAP = low score
+        roe_val = data.get('roe', 15)
+        margin_val = data.get('profit_margin', 10)
+        if roe_val > 20 and margin_val > 15:
+            components['quality_gate'] = 85  # High quality = safe contrarian buy
+        elif roe_val > 12 and margin_val > 8:
+            components['quality_gate'] = 65
+        elif roe_val > 5:
+            components['quality_gate'] = 45
+        elif roe_val <= 0 or margin_val < 0:
+            components['quality_gate'] = 15  # Negative ROE/margin = value trap
+        else:
+            components['quality_gate'] = 30
 
         # Calcular score total
         total = 0
@@ -473,15 +495,19 @@ class MultiHorizonScorer:
         components = {}
         weights = self.weights[Horizon.MEDIUM_TERM]
 
-        # === CONTRARIAN MOMENTUM (backtest: recent losers outperform at MT) ===
+        # === MOMENTUM (blended: 50% contrarian + 50% trend for differentiation) ===
 
-        # Momentum 3 months — INVERTED
+        # Momentum 3 months — blended
         mom_3m = data.get('momentum_3m', 0)
-        components['momentum_3m'] = max(10, min(90, 50 - mom_3m * 0.8))
+        m3_trend = max(10, min(90, 50 + mom_3m * 0.6))
+        m3_contra = max(10, min(90, 50 - mom_3m * 0.6))
+        components['momentum_3m'] = m3_contra * 0.5 + m3_trend * 0.5
 
-        # Momentum 6 months — INVERTED (less aggressive)
+        # Momentum 6 months — blended, more trend-following
         mom_6m = data.get('momentum_6m', 0)
-        components['momentum_6m'] = max(10, min(90, 50 - mom_6m * 0.4))
+        m6_trend = max(10, min(90, 50 + mom_6m * 0.4))
+        m6_contra = max(10, min(90, 50 - mom_6m * 0.4))
+        components['momentum_6m'] = m6_contra * 0.4 + m6_trend * 0.6
 
         # Analyst Revisions
         revisions = data.get('analyst_revisions', 0)  # % cambio en estimaciones
@@ -602,9 +628,9 @@ class MultiHorizonScorer:
         else:
             components['mean_reversion'] = 50
 
-        # Sector RS — INVERTED: sector laggards outperform (contrarian)
+        # Sector RS — blended (slight contrarian)
         sr = data.get('sector_rs', 50)
-        components['sector_rs'] = max(10, min(90, 100 - sr))
+        components['sector_rs'] = max(10, min(90, (100 - sr) * 0.4 + sr * 0.6))
 
         # Short Interest: high SI = squeeze potential
         si = data.get('short_interest', 0)
@@ -622,6 +648,20 @@ class MultiHorizonScorer:
 
         # VIX Regime
         components['vix_regime'] = data.get('vix_regime', 50)
+
+        # Quality Gate for MT
+        roe_val = data.get('roe', 15)
+        margin_val = data.get('profit_margin', 10)
+        if roe_val > 20 and margin_val > 15:
+            components['quality_gate'] = 85
+        elif roe_val > 12 and margin_val > 8:
+            components['quality_gate'] = 65
+        elif roe_val > 5:
+            components['quality_gate'] = 45
+        elif roe_val <= 0 or margin_val < 0:
+            components['quality_gate'] = 15
+        else:
+            components['quality_gate'] = 30
 
         # === ESPECULATIVO ===
 
@@ -844,9 +884,30 @@ class MultiHorizonScorer:
         else:
             components['mean_reversion'] = 50
 
-        # Sector RS — INVERTED for LT
+        # Sector RS — blended for LT
         sr = data.get('sector_rs', 50)
-        components['sector_rs'] = max(10, min(90, 100 - sr))
+        components['sector_rs'] = max(10, min(90, (100 - sr) * 0.3 + sr * 0.7))
+
+        # Short Interest
+        si = data.get('short_interest', 0)
+        if si > 20:
+            components['short_interest'] = 70
+        elif si > 10:
+            components['short_interest'] = 55
+        else:
+            components['short_interest'] = 45
+
+        # Quality Gate for LT
+        roe_val = data.get('roe', 15)
+        margin_val = data.get('profit_margin', 10)
+        if roe_val > 20 and margin_val > 15:
+            components['quality_gate'] = 85
+        elif roe_val > 10:
+            components['quality_gate'] = 60
+        elif roe_val <= 0:
+            components['quality_gate'] = 15
+        else:
+            components['quality_gate'] = 35
 
         # === ESPECULATIVO ===
 

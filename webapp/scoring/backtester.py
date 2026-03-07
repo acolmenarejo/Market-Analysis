@@ -292,6 +292,20 @@ class ScoringBacktester:
             top10 = [t for t, _ in sorted_tickers[5:10]]
             bottom5 = [t for t, _ in sorted_tickers[-5:]]
 
+            # Get VIX regime at this date
+            vix_hist = self.hist_data.get('SPY')  # Use SPY vol as proxy
+            vix_regime = 'normal'
+            if vix_hist is not None:
+                spy_slice = vix_hist.loc[:date]
+                if len(spy_slice) >= 20:
+                    spy_vol = float(spy_slice['Close'].pct_change().tail(20).std() * np.sqrt(252) * 100)
+                    if spy_vol > 30:
+                        vix_regime = 'crisis'
+                    elif spy_vol > 20:
+                        vix_regime = 'high_vol'
+                    elif spy_vol < 10:
+                        vix_regime = 'low_vol'
+
             # Calculate forward returns
             for t in self.tickers:
                 t_hist = self.hist_data.get(t)
@@ -328,6 +342,7 @@ class ScoringBacktester:
                         'entry_price': entry_price,
                         'exit_price': exit_price,
                         'return_pct': fwd_return,
+                        'vix_regime': vix_regime,
                     })
                 except Exception:
                     continue
@@ -421,6 +436,19 @@ class ScoringBacktester:
             bench_total = float(self.benchmark_curve.iloc[-1] / self.benchmark_curve.iloc[0] - 1) * 100
             alpha = round(port_total - bench_total, 1)
 
+        # Macro regime analysis
+        regime_stats = {}
+        if 'vix_regime' in trades_df.columns:
+            sb_df = trades_df[trades_df['signal'] == 'STRONG_BUY']
+            for regime in ['low_vol', 'normal', 'high_vol', 'crisis']:
+                r_trades = sb_df[sb_df['vix_regime'] == regime]
+                if len(r_trades) >= 5:
+                    regime_stats[regime] = {
+                        'count': len(r_trades),
+                        'hit_rate': round((r_trades['return_pct'] > 0).mean() * 100, 1),
+                        'avg_return': round(r_trades['return_pct'].mean(), 2),
+                    }
+
         return {
             'signal_stats': signal_stats,
             'sharpe_ratio': round(sharpe, 2),
@@ -430,6 +458,7 @@ class ScoringBacktester:
             'total_trades': len(trades_df),
             'alpha_vs_spy': alpha,
             'avg_return': round(all_returns.mean(), 2),
+            'regime_stats': regime_stats,
         }
 
     def generate_report(self) -> dict:
