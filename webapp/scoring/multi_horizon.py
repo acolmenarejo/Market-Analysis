@@ -63,86 +63,98 @@ class MultiHorizonResult:
 # Strategy: Quality fundamentals GATE the contrarian signal. Bad quality + oversold = value trap.
 
 SHORT_TERM_WEIGHTS = {
-    # Technical signals (35%) — blend of trend + contrarian
-    'rsi': 0.06,                    # RSI contrarian (oversold = buy)
-    'macd': 0.05,                   # MACD direction
-    'bollinger_position': 0.05,     # Near lower BB = opportunity
-    'konkorde': 0.05,               # Institutional flow
-    'konkorde_divergence': 0.04,    # Inst. buying while price drops
-    'trendline_breakout': 0.04,     # Trendline breakout
-    'rsi_crossover': 0.04,          # Oversold recovery
+    # Technical signals (30%)
+    'rsi': 0.06,                     # 0.28 → 0.30
+    'macd': 0.04,
+    'bollinger_position': 0.04,
+    'konkorde': 0.04,
+    'konkorde_divergence': 0.03,
+    'trendline_breakout': 0.04,
+    'rsi_crossover': 0.03,
     'volume_profile': 0.02,
 
-    # Mean-reversion (20%) — contrarian but gated by quality
-    'mean_reversion': 0.08,         # Combined RSI+momentum contrarian
-    'iv_percentile': 0.05,          # Low vol = calm entry
-    'skew_score': 0.04,             # Put skew extremes
-    'vix_regime': 0.03,
+    # Mean-reversion (16%)
+    'mean_reversion': 0.07,
+    'iv_percentile': 0.04,
+    'skew_score': 0.03,
+    'vix_regime': 0.02,
 
-    # Momentum (15%) — BLENDED: slight contrarian bias, not pure inversion
-    'momentum_1w': 0.05,            # Slight contrarian
-    'momentum_1m': 0.06,            # Slight contrarian
-    'relative_strength': 0.04,      # vs SPY
+    # Momentum (12%) — blended
+    'momentum_1w': 0.04,
+    'momentum_1m': 0.05,
+    'relative_strength': 0.03,
 
-    # Speculative (30%) — includes quality proxy via congress/sentiment
-    'congress_score': 0.10,
-    'news_sentiment': 0.08,
+    # MACRO OVERLAY (14%) — VIX, MOVE, oil, credit, geopolitical
+    'macro_overlay': 0.08,           # Composite macro risk score
+    'macro_sector_impact': 0.06,     # Sector-specific macro adjustment
+
+    # Speculative + Quality (28%)
+    'congress_score': 0.08,
+    'news_sentiment': 0.07,
     'options_flow': 0.06,
-    'quality_gate': 0.06,           # NEW: ROE/margin quality gate
-}
+    'quality_gate': 0.07,
+}  # Total: 1.00
 
 MEDIUM_TERM_WEIGHTS = {
-    # Quality fundamentals (40%) — THE primary signal at MT
-    'roe': 0.10,
-    'roic': 0.10,
-    'margin_trend': 0.07,
-    'debt_trend': 0.06,
+    # Quality fundamentals (34%)
+    'roe': 0.08,
+    'roic': 0.08,
+    'margin_trend': 0.06,
+    'debt_trend': 0.05,
     'fcf_quality_mt': 0.04,
     'quality_gate': 0.03,
 
-    # Contrarian (15%) — secondary signal, quality-gated
-    'mean_reversion': 0.06,
-    'sector_rs': 0.04,
-    'short_interest': 0.03,
+    # Contrarian (12%)
+    'mean_reversion': 0.05,
+    'sector_rs': 0.03,
+    'short_interest': 0.02,
     'vix_regime': 0.02,
 
-    # Momentum (20%) — blended, NOT pure contrarian
-    'momentum_3m': 0.07,
+    # MACRO OVERLAY (12%)
+    'macro_overlay': 0.07,
+    'macro_sector_impact': 0.05,
+
+    # Momentum (18%) — blended
+    'momentum_3m': 0.06,
     'momentum_6m': 0.05,
-    'analyst_revisions': 0.05,
+    'analyst_revisions': 0.04,
     'earnings_momentum': 0.03,
 
     # Technical (10%)
     'trend_strength': 0.05,
     'support_resistance': 0.05,
 
-    # Speculative (15%)
-    'congress_score': 0.07,
+    # Speculative (14%)
+    'congress_score': 0.06,
     'institutional_flow': 0.08,
-}
+}  # Total: 1.00
 
 LONG_TERM_WEIGHTS = {
-    # Value (30%)
-    'pe_percentile': 0.07,
+    # Value (26%)
+    'pe_percentile': 0.06,
     'pb_percentile': 0.04,
-    'ev_ebitda_percentile': 0.06,
-    'fcf_yield': 0.07,
-    'peg_ratio': 0.04,
+    'ev_ebitda_percentile': 0.05,
+    'fcf_yield': 0.06,
+    'peg_ratio': 0.03,
     'quality_gate': 0.02,
 
-    # Quality (30%)
+    # Quality (29%)
     'roe': 0.07,
-    'roic': 0.08,
+    'roic': 0.07,
     'margin_stability': 0.06,
-    'moat_score': 0.06,
-    'fcf_quality': 0.05,
+    'moat_score': 0.05,
+    'fcf_quality': 0.04,
 
-    # Stability (20%)
-    'debt_ebitda': 0.07,
+    # Stability (19%)
+    'debt_ebitda': 0.06,
     'interest_coverage': 0.04,
     'dividend_stability': 0.04,
     'earnings_stability': 0.03,
     'vix_regime': 0.02,
+
+    # MACRO OVERLAY (8%)
+    'macro_overlay': 0.05,
+    'macro_sector_impact': 0.03,
 
     # Speculative (10%)
     'congress_long_term': 0.05,
@@ -152,7 +164,7 @@ LONG_TERM_WEIGHTS = {
     'mean_reversion': 0.03,
     'sector_rs': 0.03,
     'short_interest': 0.02,
-}
+}  # Total: 1.00
 
 
 class MultiHorizonScorer:
@@ -441,19 +453,29 @@ class MultiHorizonScorer:
         components['skew_score'] = skew
 
         # Quality Gate: ROE + margin composite. High quality = safe to buy dip
-        # Low quality + oversold = VALUE TRAP = low score
         roe_val = data.get('roe', 15)
         margin_val = data.get('profit_margin', 10)
         if roe_val > 20 and margin_val > 15:
-            components['quality_gate'] = 85  # High quality = safe contrarian buy
+            components['quality_gate'] = 85
         elif roe_val > 12 and margin_val > 8:
             components['quality_gate'] = 65
         elif roe_val > 5:
             components['quality_gate'] = 45
         elif roe_val <= 0 or margin_val < 0:
-            components['quality_gate'] = 15  # Negative ROE/margin = value trap
+            components['quality_gate'] = 15
         else:
             components['quality_gate'] = 30
+
+        # === MACRO OVERLAY (14%) ===
+        # Composite macro risk: VIX + MOVE + Oil + Credit + Gold + SPY
+        # Score 0-100: low = extreme stress (bearish), high = calm (bullish)
+        macro_composite = data.get('macro_composite', 50)
+        components['macro_overlay'] = macro_composite
+
+        # Sector-specific macro adjustment
+        # Converts sector beta adjustment (-25 to +25) into 0-100 score
+        macro_sector_adj = data.get('macro_sector_adj', 0)
+        components['macro_sector_impact'] = max(5, min(95, 50 + macro_sector_adj * 2))
 
         # Calcular score total
         total = 0
@@ -662,6 +684,11 @@ class MultiHorizonScorer:
             components['quality_gate'] = 15
         else:
             components['quality_gate'] = 30
+
+        # === MACRO OVERLAY (12%) ===
+        components['macro_overlay'] = data.get('macro_composite', 50)
+        macro_sector_adj = data.get('macro_sector_adj', 0)
+        components['macro_sector_impact'] = max(5, min(95, 50 + macro_sector_adj * 2))
 
         # === ESPECULATIVO ===
 
@@ -909,6 +936,11 @@ class MultiHorizonScorer:
         else:
             components['quality_gate'] = 35
 
+        # === MACRO OVERLAY (8%) ===
+        components['macro_overlay'] = data.get('macro_composite', 50)
+        macro_sector_adj = data.get('macro_sector_adj', 0)
+        components['macro_sector_impact'] = max(5, min(95, 50 + macro_sector_adj * 2))
+
         # === ESPECULATIVO ===
 
         # Congress long-term (más peso a trades grandes)
@@ -1023,6 +1055,20 @@ class MultiHorizonScorer:
         elif konk_div < 30:
             parts.append("divergencia Konkorde: distribución institucional oculta")
 
+        # Macro Overlay
+        macro = components.get('macro_overlay', 50)
+        macro_sect = components.get('macro_sector_impact', 50)
+        if macro < 25:
+            parts.append("MACRO: estrés extremo (VIX/oil/credit)")
+        elif macro < 40:
+            parts.append("MACRO: entorno de riesgo elevado")
+        elif macro > 70:
+            parts.append("MACRO: entorno favorable")
+        if macro_sect < 25:
+            parts.append("sector muy afectado por macro")
+        elif macro_sect > 75:
+            parts.append("sector beneficiado por entorno macro")
+
         if not parts:
             return "Señales técnicas mixtas"
 
@@ -1053,6 +1099,15 @@ class MultiHorizonScorer:
             parts.append("tendencia alcista fuerte")
         elif trend < 30:
             parts.append("tendencia bajista")
+
+        # Macro
+        macro = components.get('macro_overlay', 50)
+        if macro < 30:
+            parts.append("MACRO: estrés alto — riesgo sistémico")
+        elif macro < 45:
+            parts.append("MACRO: cautela — entorno deteriorándose")
+        elif macro > 70:
+            parts.append("MACRO: entorno favorable")
 
         if not parts:
             return "Indicadores de medio plazo mixtos"
@@ -1096,6 +1151,13 @@ class MultiHorizonScorer:
         div = components.get('dividend_stability', 50)
         if div > 80:
             parts.append("historial de dividendos estable")
+
+        # Macro for LT (less weight but still mentioned)
+        macro = components.get('macro_overlay', 50)
+        if macro < 30:
+            parts.append("MACRO: estrés sistémico — vigilar")
+        elif macro > 70:
+            parts.append("MACRO: estabilidad macro favorable")
 
         if not parts:
             return "Fundamentales mixtos para largo plazo"

@@ -676,6 +676,263 @@ def _get_vix_regime_modifier() -> float:
         return 70.0
 
 
+# =============================================================================
+# MACRO OVERLAY ENGINE
+# =============================================================================
+
+# Sector sensitivity to macro factors (beta-like multipliers)
+# Positive = benefits from factor increase, Negative = hurt by it
+SECTOR_MACRO_SENSITIVITY = {
+    # sector: {oil_beta, rate_beta, credit_beta, risk_off_beta, usd_beta}
+    'Energy': {'oil': +0.8, 'rates': +0.1, 'credit': -0.2, 'risk_off': -0.3, 'usd': -0.2},
+    'Big Tech': {'oil': -0.2, 'rates': -0.4, 'credit': -0.3, 'risk_off': -0.6, 'usd': -0.1},
+    'Semiconductors': {'oil': -0.1, 'rates': -0.3, 'credit': -0.3, 'risk_off': -0.7, 'usd': -0.2},
+    'Software/Cloud': {'oil': -0.1, 'rates': -0.5, 'credit': -0.3, 'risk_off': -0.5, 'usd': -0.1},
+    'Banks/Finance': {'oil': -0.1, 'rates': +0.4, 'credit': -0.5, 'risk_off': -0.4, 'usd': +0.1},
+    'Healthcare': {'oil': -0.1, 'rates': -0.1, 'credit': -0.1, 'risk_off': -0.2, 'usd': -0.2},
+    'Consumer': {'oil': -0.3, 'rates': -0.2, 'credit': -0.2, 'risk_off': -0.3, 'usd': -0.3},
+    'Industrials/Defense': {'oil': -0.2, 'rates': -0.1, 'credit': -0.2, 'risk_off': -0.3, 'usd': -0.2},
+    'Telecom/Media': {'oil': -0.1, 'rates': -0.2, 'credit': -0.2, 'risk_off': -0.2, 'usd': -0.1},
+    'Other': {'oil': -0.1, 'rates': -0.2, 'credit': -0.2, 'risk_off': -0.3, 'usd': -0.1},
+}
+
+
+def _map_yf_sector_to_macro(yf_sector: str) -> str:
+    """Map yfinance sector names to our SECTOR_MACRO_SENSITIVITY keys."""
+    mapping = {
+        'Technology': 'Big Tech',
+        'Communication Services': 'Telecom/Media',
+        'Financial Services': 'Banks/Finance',
+        'Financials': 'Banks/Finance',
+        'Healthcare': 'Healthcare',
+        'Energy': 'Energy',
+        'Consumer Cyclical': 'Consumer',
+        'Consumer Defensive': 'Consumer',
+        'Industrials': 'Industrials/Defense',
+        'Basic Materials': 'Energy',
+        'Real Estate': 'Other',
+        'Utilities': 'Other',
+    }
+    return mapping.get(yf_sector, 'Other')
+
+
+@st.cache_data(ttl=300)
+def _compute_macro_overlay() -> Dict[str, Any]:
+    """
+    Compute comprehensive macro overlay from real-time market data.
+    Returns composite macro risk score (0-100, lower = more stress)
+    plus individual factor scores and sector adjustments.
+    """
+    macro = {
+        'vix': 20.0, 'vix_chg': 0.0,
+        'move': 100.0, 'move_chg': 0.0,
+        'oil': 70.0, 'oil_chg': 0.0,
+        'gold': 2000.0, 'gold_chg': 0.0,
+        'hyg_chg': 0.0, 'dxy_chg': 0.0,
+        'tlt_chg': 0.0, 'spy_chg': 0.0,
+    }
+
+    try:
+        # Fetch all macro instruments in one batch
+        tickers_list = ['^VIX', '^MOVE', 'CL=F', 'GC=F', 'HYG', 'DX-Y.NYB', 'TLT', 'SPY']
+        data = yf.download(tickers_list, period='10d', group_by='ticker',
+                           auto_adjust=True, threads=True, progress=False)
+
+        for sym, key in [
+            ('^VIX', 'vix'), ('^MOVE', 'move'), ('CL=F', 'oil'),
+            ('GC=F', 'gold'), ('HYG', 'hyg'), ('DX-Y.NYB', 'dxy'),
+            ('TLT', 'tlt'), ('SPY', 'spy'),
+        ]:
+            try:
+                if data.columns.nlevels > 1 and sym in data.columns.get_level_values(0):
+                    df = data[sym].dropna(how='all')
+                elif data.columns.nlevels == 1:
+                    df = data
+                else:
+                    continue
+                if df.empty or 'Close' not in df.columns or len(df) < 2:
+                    continue
+                close = df['Close'].dropna()
+                if len(close) < 2:
+                    continue
+                current = float(close.iloc[-1])
+                prev = float(close.iloc[-2])
+                pct_chg = ((current / prev) - 1) * 100 if prev > 0 else 0
+                if key in ('vix', 'move', 'oil', 'gold'):
+                    macro[key] = current
+                macro[f'{key}_chg'] = pct_chg
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # =============================================
+    # Compute stress score per factor (0=max stress, 100=no stress)
+    # =============================================
+    vix = macro['vix']
+    move = macro['move']
+
+    # VIX stress (0-100)
+    if vix >= 40:
+        vix_score = 5
+    elif vix >= 30:
+        vix_score = 15
+    elif vix >= 25:
+        vix_score = 30
+    elif vix >= 20:
+        vix_score = 45
+    elif vix >= 15:
+        vix_score = 65
+    else:
+        vix_score = 80
+
+    # MOVE stress
+    if move >= 150:
+        move_score = 5
+    elif move >= 120:
+        move_score = 20
+    elif move >= 100:
+        move_score = 40
+    elif move >= 80:
+        move_score = 65
+    else:
+        move_score = 80
+
+    # Oil shock (large daily moves are destabilizing regardless of direction)
+    oil_chg = abs(macro['oil_chg'])
+    if oil_chg >= 8:
+        oil_shock = 5       # Massive oil move = crisis
+    elif oil_chg >= 5:
+        oil_shock = 20
+    elif oil_chg >= 3:
+        oil_shock = 40
+    elif oil_chg >= 1.5:
+        oil_shock = 60
+    else:
+        oil_shock = 80
+
+    # Credit stress (HYG dropping = credit spreads widening)
+    hyg_chg = macro['hyg_chg']
+    if hyg_chg <= -2.0:
+        credit_score = 5
+    elif hyg_chg <= -1.0:
+        credit_score = 20
+    elif hyg_chg <= -0.5:
+        credit_score = 40
+    elif hyg_chg <= -0.2:
+        credit_score = 55
+    elif hyg_chg >= 0.5:
+        credit_score = 80
+    else:
+        credit_score = 70
+
+    # Gold flight-to-safety (gold surging = fear)
+    gold_chg = macro['gold_chg']
+    if gold_chg >= 3.0:
+        gold_fear = 15    # Big gold rally = extreme fear
+    elif gold_chg >= 1.5:
+        gold_fear = 35
+    elif gold_chg >= 0.5:
+        gold_fear = 55
+    else:
+        gold_fear = 75
+
+    # USD strength (strong dollar = EM/international pressure)
+    dxy_chg = macro['dxy_chg']
+    if dxy_chg >= 1.5:
+        usd_score = 20     # USD surge = stress
+    elif dxy_chg >= 0.5:
+        usd_score = 40
+    elif dxy_chg <= -0.5:
+        usd_score = 75     # USD weakness = risk-on
+    else:
+        usd_score = 60
+
+    # SPY momentum (market direction confirmation)
+    spy_chg = macro['spy_chg']
+    if spy_chg <= -3.0:
+        market_score = 5
+    elif spy_chg <= -1.5:
+        market_score = 20
+    elif spy_chg <= -0.5:
+        market_score = 40
+    elif spy_chg >= 1.0:
+        market_score = 75
+    else:
+        market_score = 55
+
+    # =============================================
+    # Composite macro score (weighted average)
+    # =============================================
+    composite = (
+        vix_score * 0.25 +        # VIX is the most important
+        move_score * 0.10 +       # MOVE for rates stress
+        oil_shock * 0.15 +        # Oil for geopolitical + inflation
+        credit_score * 0.15 +     # Credit spreads for financial stress
+        gold_fear * 0.10 +        # Gold for fear gauge
+        usd_score * 0.05 +        # USD for international impact
+        market_score * 0.20       # SPY for market direction
+    )
+    composite = max(5, min(95, composite))
+
+    # =============================================
+    # Sector-specific adjustments
+    # =============================================
+    # Oil direction matters for energy (up = good for energy, bad for consumers)
+    oil_direction = macro['oil_chg']  # positive = oil up
+
+    sector_adjustments = {}
+    for sector, betas in SECTOR_MACRO_SENSITIVITY.items():
+        adj = 0
+        # Oil impact: positive oil_chg * positive beta = good for sector
+        adj += oil_direction * betas.get('oil', 0) * 3  # Scale factor
+        # Rate/MOVE impact: high MOVE = rate vol
+        rate_stress = max(0, (move - 90) / 10)  # 0 when MOVE<90, scales up
+        adj -= rate_stress * abs(betas.get('rates', 0)) * 2
+        # Credit stress: negative HYG = bad
+        adj += hyg_chg * betas.get('credit', 0) * 3
+        # Risk-off: VIX spike + SPY drop
+        risk_off_intensity = max(0, (vix - 18) / 5) * max(0, -spy_chg)
+        adj -= risk_off_intensity * abs(betas.get('risk_off', 0)) * 1.5
+        # USD impact
+        adj -= dxy_chg * betas.get('usd', 0) * 2
+
+        # Clamp adjustment to [-25, +25] points
+        sector_adjustments[sector] = max(-25, min(25, adj))
+
+    # Build descriptive alerts
+    alerts = []
+    if vix >= 25:
+        alerts.append(f"VIX={vix:.0f} — elevated fear")
+    if move >= 110:
+        alerts.append(f"MOVE={move:.0f} — rate volatility high")
+    if abs(macro['oil_chg']) >= 3:
+        direction = "surging" if macro['oil_chg'] > 0 else "crashing"
+        alerts.append(f"Oil {direction} {macro['oil_chg']:+.1f}% — geopolitical risk")
+    if hyg_chg <= -0.5:
+        alerts.append(f"HYG {hyg_chg:+.1f}% — credit spreads widening")
+    if gold_chg >= 1.5:
+        alerts.append(f"Gold +{gold_chg:.1f}% — flight to safety")
+    if spy_chg <= -1.5:
+        alerts.append(f"SPY {spy_chg:+.1f}% — broad selloff")
+    if dxy_chg >= 1.0:
+        alerts.append(f"DXY +{dxy_chg:.1f}% — USD strengthening")
+
+    return {
+        'composite_score': round(composite, 1),
+        'vix': vix, 'vix_score': vix_score,
+        'move': move, 'move_score': move_score,
+        'oil': macro['oil'], 'oil_chg': macro['oil_chg'], 'oil_shock': oil_shock,
+        'credit_score': credit_score, 'hyg_chg': hyg_chg,
+        'gold_fear': gold_fear, 'gold_chg': gold_chg,
+        'usd_score': usd_score, 'dxy_chg': dxy_chg,
+        'market_score': market_score, 'spy_chg': spy_chg,
+        'sector_adjustments': sector_adjustments,
+        'alerts': alerts,
+        'raw': macro,
+    }
+
+
 def _calc_sector_relative_strength(ticker_momentum_3m: float, sector: str,
                                      all_hist_data: dict, tickers: list,
                                      all_info_data: dict) -> float:
@@ -735,6 +992,12 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
 
         all_hist_data = _batch_download_prices(tickers)
         all_info_data = _batch_download_info(tickers)
+
+        # Compute macro overlay ONCE for all tickers
+        macro_overlay = _compute_macro_overlay()
+        macro_composite = macro_overlay.get('composite_score', 50)
+        macro_sector_adj = macro_overlay.get('sector_adjustments', {})
+        macro_alerts = macro_overlay.get('alerts', [])
 
         for i, ticker in enumerate(tickers):
 
@@ -919,6 +1182,16 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                         float(momentum_3m), sector, all_hist_data, tickers, all_info_data),
                     'short_interest': (info.get('shortPercentOfFloat', 0) or 0) * 100,
                     'fcf_quality': _calc_fcf_quality(info),
+                    # Macro overlay — comprehensive real-time macro risk
+                    'macro_composite': macro_composite,
+                    'macro_sector_adj': macro_sector_adj.get(
+                        _map_yf_sector_to_macro(sector), 0),
+                    'macro_alerts': macro_alerts,
+                    'macro_oil_chg': macro_overlay.get('oil_chg', 0),
+                    'macro_vix': macro_overlay.get('vix', 20),
+                    'macro_move': macro_overlay.get('move', 100),
+                    'macro_hyg_chg': macro_overlay.get('hyg_chg', 0),
+                    'macro_spy_chg': macro_overlay.get('spy_chg', 0),
                 }
 
                 result = scorer.calculate_all_horizons(scoring_data)
@@ -2180,6 +2453,87 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
     if beta > 0 and vix_val > 25:
         st_factors.append(('Beta x VIX alto', -3, f'Beta={beta:.1f} con VIX={vix_val:.0f} - riesgo amplificado', 'bearish'))
 
+    # Macro Overlay factors (comprehensive macro risk from VIX, MOVE, oil, credit, gold)
+    try:
+        _macro = _compute_macro_overlay()
+        _macro_score = _macro.get('composite_score', 50)
+        _macro_alerts = _macro.get('alerts', [])
+        _macro_oil = _macro.get('oil_chg', 0)
+        _macro_move = _macro.get('move', 100)
+        _macro_hyg = _macro.get('hyg_chg', 0)
+        _macro_spy = _macro.get('spy_chg', 0)
+        _macro_gold = _macro.get('gold_chg', 0)
+
+        # Composite macro risk
+        if _macro_score < 25:
+            st_factors.append(('MACRO: estres extremo', -12,
+                f'Macro score={_macro_score:.0f}/100 — multiples factores de riesgo activos', 'bearish'))
+        elif _macro_score < 40:
+            st_factors.append(('MACRO: riesgo elevado', -8,
+                f'Macro score={_macro_score:.0f}/100 — entorno adverso', 'bearish'))
+        elif _macro_score < 50:
+            st_factors.append(('MACRO: cautela', -4,
+                f'Macro score={_macro_score:.0f}/100 — vigilar deterioro', 'bearish'))
+        elif _macro_score > 70:
+            st_factors.append(('MACRO: favorable', +5,
+                f'Macro score={_macro_score:.0f}/100 — entorno propicio', 'bullish'))
+
+        # Oil shock (geopolitical)
+        if abs(_macro_oil) >= 5:
+            direction = "subida" if _macro_oil > 0 else "caida"
+            st_factors.append((f'Oil shock ({direction})', -6 if abs(_macro_oil) >= 5 else -3,
+                f'Oil {_macro_oil:+.1f}% — riesgo geopolitico/inflacion', 'bearish'))
+        elif abs(_macro_oil) >= 3:
+            st_factors.append(('Oil volatil', -3,
+                f'Oil {_macro_oil:+.1f}% — inestabilidad energetica', 'bearish'))
+
+        # MOVE (rates volatility)
+        if _macro_move >= 130:
+            st_factors.append(('MOVE extremo', -6,
+                f'MOVE={_macro_move:.0f} — vol de rates en panico', 'bearish'))
+        elif _macro_move >= 110:
+            st_factors.append(('MOVE elevado', -3,
+                f'MOVE={_macro_move:.0f} — estres en tipos de interes', 'bearish'))
+
+        # Credit stress (HYG)
+        if _macro_hyg <= -1.0:
+            st_factors.append(('Credit spreads ampliandose', -7,
+                f'HYG {_macro_hyg:+.1f}% — estres crediticio agudo', 'bearish'))
+        elif _macro_hyg <= -0.5:
+            st_factors.append(('Credit stress moderado', -3,
+                f'HYG {_macro_hyg:+.1f}% — spreads de credito subiendo', 'bearish'))
+
+        # Gold flight to safety
+        if _macro_gold >= 2.0:
+            st_factors.append(('Flight to safety (Gold)', -4,
+                f'Gold +{_macro_gold:.1f}% — huida a refugio', 'bearish'))
+
+        # Broad market selloff
+        if _macro_spy <= -2.0:
+            st_factors.append(('Selloff de mercado', -8,
+                f'SPY {_macro_spy:+.1f}% — liquidacion generalizada', 'bearish'))
+        elif _macro_spy <= -1.0:
+            st_factors.append(('Mercado bajista', -4,
+                f'SPY {_macro_spy:+.1f}% — presion vendedora', 'bearish'))
+
+        # Sector-specific macro impact
+        _sector_macro = _map_yf_sector_to_macro(sector)
+        _sect_adj = _macro.get('sector_adjustments', {}).get(_sector_macro, 0)
+        if _sect_adj <= -10:
+            st_factors.append((f'Sector ({_sector_macro}) afectado', -6,
+                f'Impacto macro sector={_sect_adj:+.0f}pts — headwind fuerte', 'bearish'))
+        elif _sect_adj <= -5:
+            st_factors.append((f'Sector ({_sector_macro}) presionado', -3,
+                f'Impacto macro sector={_sect_adj:+.0f}pts', 'bearish'))
+        elif _sect_adj >= 10:
+            st_factors.append((f'Sector ({_sector_macro}) beneficiado', +6,
+                f'Impacto macro sector={_sect_adj:+.0f}pts — tailwind fuerte', 'bullish'))
+        elif _sect_adj >= 5:
+            st_factors.append((f'Sector ({_sector_macro}) favorecido', +3,
+                f'Impacto macro sector={_sect_adj:+.0f}pts', 'bullish'))
+    except Exception:
+        pass
+
     # Options/Gamma - Short term (only if sufficient OI)
     if total_options_oi >= 100 and gamma_regime is not None:
         # Gamma regime
@@ -2328,6 +2682,27 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
 
     if credit_stress:
         mt_factors.append(('Estres crediticio', -5, 'Spreads de credito ampliandose - friccion alta', 'bearish'))
+
+    # Macro overlay — medium-term factors
+    try:
+        _macro = _compute_macro_overlay()
+        _macro_score = _macro.get('composite_score', 50)
+        _macro_oil = _macro.get('oil_chg', 0)
+        _macro_move = _macro.get('move', 100)
+        if _macro_score < 35:
+            mt_factors.append(('MACRO: entorno adverso', -7,
+                f'Macro score={_macro_score:.0f}/100 — riesgo sistemico elevado', 'bearish'))
+        elif _macro_score < 50:
+            mt_factors.append(('MACRO: cautela', -3,
+                f'Macro score={_macro_score:.0f}/100 — condiciones deteriorandose', 'bearish'))
+        if _macro_move >= 120:
+            mt_factors.append(('Rates vol elevada (MOVE)', -4,
+                f'MOVE={_macro_move:.0f} — incertidumbre en tipos', 'bearish'))
+        if abs(_macro_oil) >= 5:
+            mt_factors.append(('Shock energetico', -4,
+                f'Oil {_macro_oil:+.1f}% — riesgo inflacion/margenes', 'bearish'))
+    except Exception:
+        pass
 
     # P/S ratio (useful for growth stocks)
     if ps > 0:
@@ -2532,9 +2907,32 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
         gv_pct = ((graham_value - price) / price * 100) if price > 0 else 0
         parts.append(f"Graham Number: ${graham_value:.0f} ({gv_pct:+.0f}% vs precio).")
     parts.append(f"Principal catalizador: {top_bull}. Principal riesgo: {top_bear}.")
-    # Macro/liquidity context
-    if vix_val > 0:
-        parts.append(f"Macro: VIX={vix_val:.0f}, Risk Score={risk_score}/100 ({risk_regime}).")
+    # Macro/liquidity context (comprehensive)
+    try:
+        _macro_summary = _compute_macro_overlay()
+        _ms = _macro_summary.get('composite_score', 50)
+        _mv = _macro_summary.get('vix', 0)
+        _mmove = _macro_summary.get('move', 0)
+        _moil = _macro_summary.get('oil_chg', 0)
+        _malerts = _macro_summary.get('alerts', [])
+        macro_parts = [f"VIX={_mv:.0f}"]
+        if _mmove > 0:
+            macro_parts.append(f"MOVE={_mmove:.0f}")
+        if abs(_moil) >= 1:
+            macro_parts.append(f"Oil {_moil:+.1f}%")
+        macro_parts.append(f"Macro Score={_ms:.0f}/100")
+        if _ms < 30:
+            macro_parts.append("(ESTRES)")
+        elif _ms < 50:
+            macro_parts.append("(CAUTELA)")
+        elif _ms > 70:
+            macro_parts.append("(FAVORABLE)")
+        parts.append(f"Macro: {', '.join(macro_parts)}.")
+        if _malerts:
+            parts.append(f"Alertas: {'; '.join(_malerts[:3])}.")
+    except Exception:
+        if vix_val > 0:
+            parts.append(f"Macro: VIX={vix_val:.0f}, Risk Score={risk_score}/100 ({risk_regime}).")
     if congress_detail:
         parts.append(f"Congress: {congress_detail}.")
     if poly_detail:

@@ -5208,6 +5208,68 @@ def show_score_page():
     st.markdown('<p class="main-header">📋 Score — Multi-Horizon Analysis</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Scores auto-refresh every 10 min. Use 🗑 to force refresh.</p>', unsafe_allow_html=True)
 
+    # --- Macro Environment Banner ---
+    try:
+        from webapp.data.providers import _compute_macro_overlay
+        macro_data = _compute_macro_overlay()
+        macro_score = macro_data.get('composite_score', 50)
+        macro_alerts = macro_data.get('alerts', [])
+        vix_val = macro_data.get('vix', 20)
+        move_val = macro_data.get('move', 100)
+        oil_chg = macro_data.get('oil_chg', 0)
+        spy_chg = macro_data.get('spy_chg', 0)
+
+        # Determine stress level and color
+        if macro_score < 25:
+            stress_label, stress_color, stress_bg = 'EXTREME STRESS', '#f85149', 'rgba(248,81,73,0.15)'
+        elif macro_score < 40:
+            stress_label, stress_color, stress_bg = 'HIGH STRESS', '#f0883e', 'rgba(240,136,62,0.15)'
+        elif macro_score < 55:
+            stress_label, stress_color, stress_bg = 'CAUTELA', '#d29922', 'rgba(210,153,34,0.12)'
+        elif macro_score < 70:
+            stress_label, stress_color, stress_bg = 'NORMAL', '#58a6ff', 'rgba(88,166,255,0.08)'
+        else:
+            stress_label, stress_color, stress_bg = 'RISK-ON', '#3fb950', 'rgba(63,185,80,0.10)'
+
+        alert_html = ""
+        if macro_alerts:
+            alerts_str = " | ".join(macro_alerts[:4])
+            alert_html = f'<div style="margin-top:6px;font-size:0.8rem;color:#f0883e;">⚠ {alerts_str}</div>'
+
+        _esc_fn = lambda s: s.replace('$', '&#36;')
+        st.markdown(f"""
+        <div style="background:{stress_bg};border:1px solid {stress_color}40;border-radius:8px;
+                    padding:10px 16px;margin-bottom:12px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <span style="font-size:1.1rem;font-weight:700;color:{stress_color};">
+                        MACRO: {stress_label}
+                    </span>
+                    <span style="font-size:0.85rem;color:#8b949e;">
+                        Score {macro_score:.0f}/100
+                    </span>
+                </div>
+                <div style="display:flex;gap:16px;font-size:0.85rem;">
+                    <span style="color:{'#f85149' if vix_val > 25 else '#d29922' if vix_val > 20 else '#3fb950'};">
+                        VIX {vix_val:.1f}
+                    </span>
+                    <span style="color:{'#f85149' if move_val > 120 else '#d29922' if move_val > 100 else '#3fb950'};">
+                        MOVE {move_val:.0f}
+                    </span>
+                    <span style="color:{'#3fb950' if oil_chg > 0 else '#f85149'};">
+                        Oil {oil_chg:+.1f}%
+                    </span>
+                    <span style="color:{'#3fb950' if spy_chg > 0 else '#f85149'};">
+                        SPY {spy_chg:+.1f}%
+                    </span>
+                </div>
+            </div>
+            {alert_html}
+        </div>
+        """, unsafe_allow_html=True)
+    except Exception:
+        pass  # Don't block score page if macro fails
+
     # Build reverse sector map: ticker → sector
     ticker_to_sector = {}
     for sector, tickers in SECTOR_MAP.items():
