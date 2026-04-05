@@ -220,9 +220,9 @@ def calculate_konkorde(hist: pd.DataFrame) -> Dict[str, pd.Series]:
     if hist is None or len(hist) < 20:
         return {'azul': pd.Series(), 'verde': pd.Series(), 'marron': pd.Series(), 'media': pd.Series()}
 
-    close = hist['Close'].fillna(method='ffill')
-    high = hist['High'].fillna(method='ffill')
-    low = hist['Low'].fillna(method='ffill')
+    close = hist['Close'].ffill()
+    high = hist['High'].ffill()
+    low = hist['Low'].ffill()
     volume = hist['Volume'].fillna(0)
 
     # Typical price
@@ -365,6 +365,149 @@ def _yf_retry(fn, retries=3, base_delay=2):
     return None
 
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_historical_pe(ticker: str) -> dict:
+    """
+    Fetch annual trailing P/E history for a ticker using yfinance.
+
+    Computes P/E as year-end price / trailing EPS (net income / shares).
+    Returns up to 10 years of data, or fewer for newer companies.
+
+    Returns:
+        {
+            'years': list[int],
+            'pe_values': list[float],   # NaN-cleaned
+            'avg_pe': float,
+            'current_pe': float,
+            'pct_rank': float,          # 0-100: where current P/E sits in 10Y history
+            'num_years': int,
+            'error': str or None
+        }
+    """
+    try:
+        stock = yf.Ticker(ticker)
+
+        # Get annual income statement for net income + shares
+        try:
+            income = stock.income_stmt  # columns = fiscal year dates
+        except Exception:
+            income = None
+
+        # Get shares outstanding from info
+        info = stock.fast_info if hasattr(stock, 'fast_info') else {}
+
+        years_pe = {}
+
+        if income is not None and not income.empty:
+            # Rows: metrics, columns: year-end dates (most recent first)
+            for col in income.columns:
+                year = col.year if hasattr(col, 'year') else None
+                if year is None:
+                    continue
+                try:
+                    # Net Income
+                    ni_row = None
+                    for label in ['Net Income', 'NetIncome', 'Net Income Common Stockholders']:
+                        if label in income.index:
+                            ni_row = income.loc[label, col]
+                            break
+                    if ni_row is None or pd.isna(ni_row):
+                        continue
+
+                    # Shares outstanding (diluted preferred)
+                    shares = None
+                    for label in ['Diluted Average Shares', 'Basic Average Shares', 'Share Issued']:
+                        if label in income.index:
+                            shares = income.loc[label, col]
+                            break
+                    if shares is None or pd.isna(shares) or shares == 0:
+                        # Fallback: get from fast_info / info
+                        try:
+                            shares = stock.info.get('sharesOutstanding', None) or stock.info.get('impliedSharesOutstanding', None)
+                        except Exception:
+                            shares = None
+
+                    if shares is None or shares == 0:
+                        continue
+
+                    eps = float(ni_row) / float(shares)
+                    if eps <= 0:
+                        continue  # Skip loss years for P/E calculation
+
+                    # Get year-end price (last trading day of that year)
+                    year_end = f"{year}-12-31"
+                    try:
+                        hist_y = stock.history(start=f"{year}-11-01", end=f"{year+1}-01-15", interval="1d")
+                        if not hist_y.empty:
+                            year_price = float(hist_y['Close'].iloc[-1])
+                        else:
+                            continue
+                    except Exception:
+                        continue
+
+                    pe = year_price / eps
+                    if 0 < pe < 500:  # Sanity check
+                        years_pe[year] = round(pe, 1)
+                except Exception:
+                    continue
+
+        if not years_pe:
+            # Fallback: use info trailing PE + forward PE only
+            try:
+                current_pe = float(stock.info.get('trailingPE', 0) or 0)
+            except Exception:
+                current_pe = 0
+            return {
+                'years': [],
+                'pe_values': [],
+                'avg_pe': current_pe,
+                'current_pe': current_pe,
+                'pct_rank': 50.0,
+                'num_years': 0,
+                'error': 'Insufficient historical earnings data'
+            }
+
+        # Sort by year ascending
+        sorted_years = sorted(years_pe.keys())
+        pe_vals = [years_pe[y] for y in sorted_years]
+
+        avg_pe = round(float(pd.Series(pe_vals).mean()), 1)
+
+        # Current P/E from info
+        try:
+            current_pe = float(stock.info.get('trailingPE', 0) or 0)
+        except Exception:
+            current_pe = pe_vals[-1] if pe_vals else 0
+
+        # Percentile rank: where does current P/E sit in historical range?
+        if len(pe_vals) >= 2 and current_pe > 0:
+            below = sum(1 for v in pe_vals if v <= current_pe)
+            pct_rank = round(below / len(pe_vals) * 100, 1)
+        else:
+            pct_rank = 50.0
+
+        return {
+            'years': sorted_years,
+            'pe_values': pe_vals,
+            'avg_pe': avg_pe,
+            'current_pe': round(current_pe, 1),
+            'pct_rank': pct_rank,
+            'num_years': len(sorted_years),
+            'error': None
+        }
+
+    except Exception as e:
+        return {
+            'years': [],
+            'pe_values': [],
+            'avg_pe': 0,
+            'current_pe': 0,
+            'pct_rank': 50.0,
+            'num_years': 0,
+            'error': str(e)
+        }
+
+
 @st.cache_data(ttl=300, show_spinner=False)  # 5 minutos - aumentado para mejor performance
 def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
     """Obtiene datos completos de un stock"""
@@ -398,40 +541,61 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
             signal_line = macd.ewm(span=9, adjust=False).mean()
             macd_current = macd.iloc[-1] if not macd.empty else 0
             signal_current = signal_line.iloc[-1] if not signal_line.empty else 0
-            macd_bullish = macd_current > signal_current
+            try:
+                macd_bullish = bool(macd_current > signal_current)
+            except (TypeError, ValueError):
+                macd_bullish = False
 
             # Bollinger Bands
             sma20 = close.rolling(window=20).mean()
             std20 = close.rolling(window=20).std()
             bb_upper = sma20 + (std20 * 2)
             bb_lower = sma20 - (std20 * 2)
-            current_price = close.iloc[-1]
-            bb_position = "Middle"
-            if current_price > bb_upper.iloc[-1]:
-                bb_position = "Above Upper"
-            elif current_price < bb_lower.iloc[-1]:
-                bb_position = "Below Lower"
-
-            # Momentum
-            if len(close) >= 20:
-                momentum_1m = ((close.iloc[-1] / close.iloc[-20]) - 1) * 100
+            current_price = float(close.iloc[-1])
+            if pd.isna(current_price) or current_price <= 0:
+                current_price = 0
+                bb_position = "N/A"
             else:
+                bb_position = "Middle"
+                try:
+                    _bb_up = float(bb_upper.iloc[-1])
+                    _bb_lo = float(bb_lower.iloc[-1])
+                    if pd.isna(_bb_up): _bb_up = current_price * 1.1
+                    if pd.isna(_bb_lo): _bb_lo = current_price * 0.9
+                    if current_price > _bb_up:
+                        bb_position = "Above Upper"
+                    elif current_price < _bb_lo:
+                        bb_position = "Below Lower"
+                except (TypeError, ValueError):
+                    pass
+
+            # Momentum (with NaN guards)
+            try:
+                momentum_1m = ((close.iloc[-1] / close.iloc[-20]) - 1) * 100 if len(close) >= 20 else 0
+                if pd.isna(momentum_1m): momentum_1m = 0
+            except (TypeError, ZeroDivisionError):
                 momentum_1m = 0
 
-            if len(close) >= 60:
-                momentum_3m = ((close.iloc[-1] / close.iloc[-60]) - 1) * 100
-            else:
+            try:
+                momentum_3m = ((close.iloc[-1] / close.iloc[-60]) - 1) * 100 if len(close) >= 60 else momentum_1m
+                if pd.isna(momentum_3m): momentum_3m = 0
+            except (TypeError, ZeroDivisionError):
                 momentum_3m = momentum_1m
 
             # Volume
-            avg_volume = hist['Volume'].rolling(20).mean().iloc[-1] if len(hist) >= 20 else hist['Volume'].mean()
-            current_volume = hist['Volume'].iloc[-1]
-            volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1
+            try:
+                avg_volume = hist['Volume'].rolling(20).mean().iloc[-1] if len(hist) >= 20 else hist['Volume'].mean()
+                current_volume = hist['Volume'].iloc[-1]
+                volume_ratio = float(current_volume / avg_volume) if avg_volume > 0 else 1
+                if pd.isna(volume_ratio): volume_ratio = 1
+            except (TypeError, ZeroDivisionError):
+                volume_ratio = 1
 
             # VWAP (diario)
             typical_price = (hist['High'] + hist['Low'] + hist['Close']) / 3
             vwap = (typical_price * hist['Volume']).cumsum() / hist['Volume'].cumsum()
-            current_vwap = vwap.iloc[-1] if not vwap.empty else current_price
+            current_vwap = float(vwap.iloc[-1]) if not vwap.empty else current_price
+            if pd.isna(current_vwap): current_vwap = current_price
 
         else:
             current_rsi = 50
@@ -579,17 +743,20 @@ def _batch_download_prices(tickers: List[str]) -> dict:
                 except Exception:
                     continue
 
-    # Fallback: individually download missing tickers (batch sometimes silently drops some)
+    # Fallback: individually download missing tickers
+    # Tries multiple periods (6mo → 1y → 3mo) for resilience with international tickers
     missing = [t for t in tickers if t not in all_hist_data]
     if missing:
-        for t in missing[:30]:  # Cap at 30 to avoid rate limiting
-            try:
-                h = yf.Ticker(t).history(period="6mo")
-                if not h.empty and 'Close' in h.columns:
-                    all_hist_data[t] = h
-            except Exception:
-                continue
-            _time.sleep(0.2)  # Small delay between individual calls
+        for t in missing[:50]:  # Raised cap from 30 → 50
+            for _period in ("6mo", "1y", "3mo"):
+                try:
+                    h = yf.Ticker(t).history(period=_period, auto_adjust=True)
+                    if not h.empty and 'Close' in h.columns and len(h) >= 20:
+                        all_hist_data[t] = h
+                        break
+                except Exception:
+                    continue
+            _time.sleep(0.15)
 
     return all_hist_data
 
@@ -684,21 +851,124 @@ def _get_vix_regime_modifier() -> float:
 # Positive = benefits from factor increase, Negative = hurt by it
 SECTOR_MACRO_SENSITIVITY = {
     # sector: {oil_beta, rate_beta, credit_beta, risk_off_beta, usd_beta}
-    'Energy': {'oil': +0.8, 'rates': +0.1, 'credit': -0.2, 'risk_off': -0.3, 'usd': -0.2},
-    'Big Tech': {'oil': -0.2, 'rates': -0.4, 'credit': -0.3, 'risk_off': -0.6, 'usd': -0.1},
-    'Semiconductors': {'oil': -0.1, 'rates': -0.3, 'credit': -0.3, 'risk_off': -0.7, 'usd': -0.2},
-    'Software/Cloud': {'oil': -0.1, 'rates': -0.5, 'credit': -0.3, 'risk_off': -0.5, 'usd': -0.1},
-    'Banks/Finance': {'oil': -0.1, 'rates': +0.4, 'credit': -0.5, 'risk_off': -0.4, 'usd': +0.1},
-    'Healthcare': {'oil': -0.1, 'rates': -0.1, 'credit': -0.1, 'risk_off': -0.2, 'usd': -0.2},
-    'Consumer': {'oil': -0.3, 'rates': -0.2, 'credit': -0.2, 'risk_off': -0.3, 'usd': -0.3},
-    'Industrials/Defense': {'oil': -0.2, 'rates': -0.1, 'credit': -0.2, 'risk_off': -0.3, 'usd': -0.2},
-    'Telecom/Media': {'oil': -0.1, 'rates': -0.2, 'credit': -0.2, 'risk_off': -0.2, 'usd': -0.1},
-    'Other': {'oil': -0.1, 'rates': -0.2, 'credit': -0.2, 'risk_off': -0.3, 'usd': -0.1},
+    # Positive beta = benefits when factor rises. Negative = hurt when factor rises.
+
+    # --- ENERGY ---
+    # Oil is revenue; geopolitical crises = windfall
+    'Energy': {'oil': +0.9, 'rates': +0.15, 'credit': -0.2, 'risk_off': -0.2, 'usd': -0.3},
+
+    # --- MINING / BASE MATERIALS ---
+    # Oil is a COST (diesel, smelting energy). Risk-off very bad (cyclical, China steel demand).
+    # USD negative: industrial commodities priced in USD → strong USD kills demand.
+    'Mining/Materials': {'oil': -0.30, 'rates': -0.10, 'credit': -0.30, 'risk_off': -0.65, 'usd': -0.55},
+
+    # --- TECH ---
+    'Big Tech': {'oil': -0.15, 'rates': -0.50, 'credit': -0.3, 'risk_off': -0.6, 'usd': -0.1},
+    'Semiconductors': {'oil': -0.10, 'rates': -0.35, 'credit': -0.3, 'risk_off': -0.7, 'usd': -0.2},
+    'Software/Cloud': {'oil': -0.10, 'rates': -0.55, 'credit': -0.3, 'risk_off': -0.5, 'usd': -0.1},
+    # Biotech: long R&D cash-flow duration → very rate-sensitive. FDA binary risk = crisis-sensitive.
+    'Biotech': {'oil': -0.05, 'rates': -0.45, 'credit': -0.35, 'risk_off': -0.50, 'usd': -0.15},
+    # EV/Growth tech: not oil-revenue, not consumer staples; deep growth = rate-sensitive
+    'EV/Growth': {'oil': -0.05, 'rates': -0.45, 'credit': -0.35, 'risk_off': -0.55, 'usd': -0.15},
+    # Crypto/Fintech: risk-on assets, very credit-sensitive, not a bank (rates are negative)
+    'Crypto/Fintech': {'oil': -0.05, 'rates': -0.35, 'credit': -0.55, 'risk_off': -0.75, 'usd': +0.10},
+    # Gig economy platforms: not oil-sensitive (asset-light), credit sensitive (growth biz model)
+    'Gig/Platforms': {'oil': -0.05, 'rates': -0.30, 'credit': -0.30, 'risk_off': -0.50, 'usd': -0.10},
+
+    # --- FINANCIALS ---
+    # Banks: rates positive (NIM expansion), credit very negative (loan losses)
+    # Fixed: credit_beta -0.60 → -0.40 (was 2x too extreme)
+    'Banks/Finance': {'oil': -0.10, 'rates': +0.45, 'credit': -0.40, 'risk_off': -0.40, 'usd': +0.15},
+
+    # --- HEALTHCARE ---
+    'Healthcare': {'oil': -0.10, 'rates': -0.10, 'credit': -0.10, 'risk_off': +0.30, 'usd': -0.20},
+
+    # --- CONSUMER ---
+    # Fixed: rates_beta -0.25 → -0.10 (was 2.5x too aggressive)
+    # Consumer Staples (PG, KO, WMT) barely rate-sensitive; Discretionary (HD, MCD) slightly more
+    'Consumer': {'oil': -0.40, 'rates': -0.10, 'credit': -0.20, 'risk_off': -0.30, 'usd': -0.30},
+
+    # --- INDUSTRIALS (non-defense): CAT, DE, UNP, HON, GE, UPS ---
+    # Oil is an input cost; cyclical = negative risk-off
+    'Industrials': {'oil': -0.20, 'rates': -0.15, 'credit': -0.25, 'risk_off': -0.40, 'usd': -0.20},
+
+    # --- DEFENSE (pure): LMT, RTX, NOC, GD, HII, LHX, TDG, RHM.DE, AIR.DE ---
+    # Geopolitical hedges: oil spike (= war risk) is POSITIVE. Risk-off = positive (safe-haven).
+    # Rates mildly negative (government financing risk). USD neutral (global contracts).
+    'Defense': {'oil': +0.25, 'rates': -0.05, 'credit': -0.10, 'risk_off': +0.45, 'usd': 0.0},
+
+    # --- TELECOM / MEDIA ---
+    # Defensive (stable revenues). Rate-sensitive (capex-heavy, bond-financed).
+    # Fixed: was missing from _calc_macro_regime_boost (fell to else: 50)
+    'Telecom/Media': {'oil': -0.10, 'rates': -0.25, 'credit': -0.20, 'risk_off': -0.10, 'usd': -0.10},
+
+    # --- REITs: yield instruments, very rate-sensitive ---
+    'REITs': {'oil': -0.10, 'rates': -0.60, 'credit': -0.25, 'risk_off': +0.20, 'usd': 0.0},
+
+    # --- UTILITIES: regulated, partially pass-through, less rate-sensitive than REITs ---
+    # Fixed: was grouped with REITs at -0.60 rates; utilities get -0.30 (regulated ROE floors)
+    'Utilities': {'oil': -0.05, 'rates': -0.30, 'credit': -0.15, 'risk_off': +0.15, 'usd': -0.05},
+
+    # Fallback
+    'Other': {'oil': -0.10, 'rates': -0.20, 'credit': -0.20, 'risk_off': -0.30, 'usd': -0.10},
 }
 
 
-def _map_yf_sector_to_macro(yf_sector: str) -> str:
-    """Map yfinance sector names to our SECTOR_MACRO_SENSITIVITY keys."""
+def _map_yf_sector_to_macro(yf_sector: str, ticker: str = '') -> str:
+    """Map yfinance sector names to SECTOR_MACRO_SENSITIVITY keys.
+
+    Ticker-level overrides take priority over generic sector mapping.
+    This handles cases where yfinance groups economically-different companies
+    into the same broad sector (e.g. Biotech vs Healthcare, Defense vs Industrials).
+    """
+    # ----------------------------------------------------------------
+    # Ticker-level overrides (correct economic sector regardless of yf grouping)
+    # ----------------------------------------------------------------
+    TICKER_OVERRIDES = {
+        # --- Defense primes (classified as Industrials or Aerospace in yf) ---
+        'LMT': 'Defense', 'RTX': 'Defense', 'NOC': 'Defense', 'GD': 'Defense',
+        'HII': 'Defense', 'LHX': 'Defense', 'TDG': 'Defense', 'BA': 'Defense',
+        'RHM.DE': 'Defense', 'AIR.DE': 'Defense', 'HEN3.DE': 'Defense',
+        'BAE.L': 'Defense', 'SAAB-B.ST': 'Defense',
+
+        # --- Biotech (yf puts under Healthcare, but very different rate/crisis sensitivity) ---
+        'AMGN': 'Biotech', 'GILD': 'Biotech', 'REGN': 'Biotech', 'VRTX': 'Biotech',
+        'MRNA': 'Biotech', 'BIIB': 'Biotech', 'ILMN': 'Biotech', 'IONS': 'Biotech',
+        'CRSP': 'Biotech', 'EDIT': 'Biotech', 'BEAM': 'Biotech',
+
+        # --- EV / Growth tech (yf classifies as Consumer Cyclical) ---
+        'TSLA': 'EV/Growth', 'RIVN': 'EV/Growth', 'LCID': 'EV/Growth',
+        'NIO': 'EV/Growth', 'XPEV': 'EV/Growth', 'LI': 'EV/Growth',
+
+        # --- Crypto / Fintech (yf classifies as Financial Services) ---
+        'COIN': 'Crypto/Fintech', 'HOOD': 'Crypto/Fintech', 'SOFI': 'Crypto/Fintech',
+        'AFRM': 'Crypto/Fintech', 'UPST': 'Crypto/Fintech', 'MSTR': 'Crypto/Fintech',
+        'SQ': 'Crypto/Fintech', 'PYPL': 'Crypto/Fintech',
+
+        # --- Gig / Platforms (yf classifies as Consumer Cyclical) ---
+        'UBER': 'Gig/Platforms', 'LYFT': 'Gig/Platforms', 'DASH': 'Gig/Platforms',
+        'ABNB': 'Gig/Platforms', 'GRAB': 'Gig/Platforms',
+
+        # --- Pure REITs (yf = Real Estate, correct) ---
+        'AMT': 'REITs', 'PLD': 'REITs', 'EQIX': 'REITs', 'SPG': 'REITs',
+        'O': 'REITs', 'PSA': 'REITs', 'CCI': 'REITs', 'DLR': 'REITs',
+
+        # --- Pure Utilities ---
+        'NEE': 'Utilities', 'DUK': 'Utilities', 'SO': 'Utilities', 'D': 'Utilities',
+        'AEP': 'Utilities', 'SRE': 'Utilities', 'EXC': 'Utilities', 'XEL': 'Utilities',
+        'SSE.L': 'Utilities', 'NG.L': 'Utilities', 'NESTE.HE': 'Utilities',
+        'ENEL.MI': 'Utilities', 'IBE.MC': 'Utilities',
+
+        # --- Berkshire: insurance/investment holding, not a standard bank ---
+        'BRK-B': 'Banks/Finance', 'BRK-A': 'Banks/Finance',
+    }
+
+    if ticker and ticker.upper() in TICKER_OVERRIDES:
+        return TICKER_OVERRIDES[ticker.upper()]
+
+    # ----------------------------------------------------------------
+    # Generic yfinance sector → macro sector mapping
+    # ----------------------------------------------------------------
     mapping = {
         'Technology': 'Big Tech',
         'Communication Services': 'Telecom/Media',
@@ -708,12 +978,312 @@ def _map_yf_sector_to_macro(yf_sector: str) -> str:
         'Energy': 'Energy',
         'Consumer Cyclical': 'Consumer',
         'Consumer Defensive': 'Consumer',
-        'Industrials': 'Industrials/Defense',
-        'Basic Materials': 'Energy',
-        'Real Estate': 'Other',
-        'Utilities': 'Other',
+        'Industrials': 'Industrials',        # pure industrials (non-defense)
+        'Basic Materials': 'Mining/Materials',
+        'Real Estate': 'REITs',
+        'Utilities': 'Utilities',
     }
     return mapping.get(yf_sector, 'Other')
+
+
+def _calc_macro_regime_boost(yf_sector: str, macro_overlay: Dict, ticker: str = '') -> float:
+    """
+    Sector-specific macro regime rotation score (0-100).
+    Uses granular sectors with economically-correct logic per asset class.
+    Ticker-level overrides take priority (TSLA→EV/Growth, LMT→Defense, etc.)
+    """
+    oil_chg = macro_overlay.get('oil_chg', 0)
+    vix = macro_overlay.get('vix', 20)
+    hyg_chg = macro_overlay.get('hyg_chg', 0)
+    spy_chg = macro_overlay.get('spy_chg', 0)
+    gold_chg = macro_overlay.get('gold_chg', 0)
+
+    sector = _map_yf_sector_to_macro(yf_sector, ticker)
+
+    # ----------------------------------------------------------------
+    # ENERGY — oil is direct revenue
+    # ----------------------------------------------------------------
+    if sector in ('Energy', 'Energy/Materials'):
+        if oil_chg >= 5: return 95
+        elif oil_chg >= 3: return 85
+        elif oil_chg >= 1.5: return 72
+        elif oil_chg <= -5: return 10
+        elif oil_chg <= -3: return 20
+        elif oil_chg <= -1.5: return 35
+        else: return max(10, min(90, 50 + oil_chg * 5))
+
+    # ----------------------------------------------------------------
+    # MINING / BASE MATERIALS — oil is a COST, not revenue
+    # ----------------------------------------------------------------
+    elif sector == 'Mining/Materials':
+        score = 50
+        if oil_chg >= 3: score -= 20     # large fuel/smelting cost spike
+        elif oil_chg >= 1.5: score -= 10
+        elif oil_chg <= -2: score += 8   # cost relief
+        if gold_chg >= 2.5: score += 15  # precious metals exposure
+        elif gold_chg >= 1.2: score += 8
+        elif gold_chg <= -1.5: score -= 8
+        if vix >= 30: score -= 22
+        elif vix >= 25: score -= 12
+        elif vix < 15: score += 8
+        if spy_chg <= -2: score -= 12    # China/industrial demand proxy
+        elif spy_chg >= 1: score += 5
+        if hyg_chg <= -1.0: score -= 15
+        elif hyg_chg >= 0.5: score += 5
+        return max(5, min(95, score))
+
+    # ----------------------------------------------------------------
+    # DEFENSE — geopolitical hedges; oil spike = war risk = positive
+    # ----------------------------------------------------------------
+    elif sector == 'Defense':
+        score = 50
+        if oil_chg >= 3: score += 18    # war/conflict scenario = budget boost
+        elif oil_chg >= 1.5: score += 10
+        if gold_chg >= 2: score += 12   # flight-to-safety + geopolitical
+        elif gold_chg >= 1: score += 6
+        if vix >= 30: score += 10       # crisis = defense spending surge
+        elif vix >= 25: score += 6
+        elif vix < 15: score -= 5       # peacetime = budget pressure
+        if spy_chg <= -2: score += 8    # counter-cyclical safe-haven
+        return max(5, min(95, score))
+
+    # ----------------------------------------------------------------
+    # INDUSTRIALS (non-defense): CAT, DE, UNP, HON, GE, UPS
+    # ----------------------------------------------------------------
+    elif sector in ('Industrials', 'Industrials/Defense'):
+        score = 50
+        if oil_chg >= 3: score -= 10    # energy input cost
+        elif oil_chg >= 1.5: score -= 5
+        if gold_chg >= 2: score += 5    # geopolitical = some infra spending
+        if spy_chg <= -2: score -= 12   # deeply cyclical
+        elif spy_chg >= 1: score += 6
+        if vix >= 30: score -= 10
+        return max(5, min(95, score))
+
+    # ----------------------------------------------------------------
+    # BANKS / FINANCE
+    # ----------------------------------------------------------------
+    elif sector == 'Banks/Finance':
+        score = 50
+        if hyg_chg <= -1.5: score -= 28  # severe credit stress
+        elif hyg_chg <= -0.8: score -= 18
+        elif hyg_chg >= 0.5: score += 10
+        if vix >= 32: score -= 18
+        elif vix >= 26: score -= 10
+        elif vix < 16: score += 8
+        if oil_chg >= 4: score -= 5     # stagflation risk
+        return max(5, min(95, score))
+
+    # ----------------------------------------------------------------
+    # CRYPTO / FINTECH — risk-on assets, not a bank
+    # ----------------------------------------------------------------
+    elif sector == 'Crypto/Fintech':
+        score = 50
+        if vix >= 30: score -= 28       # extreme risk-off = crypto crash
+        elif vix >= 25: score -= 18
+        elif vix < 16: score += 15      # risk-on = crypto surge
+        if hyg_chg <= -1.0: score -= 20 # credit tightening = fintech pain
+        elif hyg_chg >= 0.5: score += 10
+        if spy_chg <= -2: score -= 15
+        elif spy_chg >= 1.5: score += 10
+        return max(5, min(95, score))
+
+    # ----------------------------------------------------------------
+    # BIG TECH / SEMIS / SOFTWARE
+    # ----------------------------------------------------------------
+    elif sector in ('Big Tech', 'Semiconductors', 'Software/Cloud'):
+        score = 50
+        if vix >= 30: score -= 20
+        elif vix >= 25: score -= 10
+        elif vix < 15: score += 10
+        if spy_chg <= -2: score -= 15
+        elif spy_chg >= 1: score += 8
+        if oil_chg >= 3: score -= 5    # inflation fears
+        return max(5, min(95, score))
+
+    # ----------------------------------------------------------------
+    # BIOTECH — long cash-flow duration, FDA binary, rate-sensitive
+    # ----------------------------------------------------------------
+    elif sector == 'Biotech':
+        score = 50
+        if vix >= 30: score -= 15       # risk-off but less than cyclicals
+        elif vix >= 25: score -= 8
+        elif vix < 16: score += 8
+        if spy_chg <= -2: score -= 12
+        elif spy_chg >= 2: score += 5
+        if hyg_chg <= -1.0: score -= 12 # credit = biotech funding risk
+        return max(5, min(95, score))
+
+    # ----------------------------------------------------------------
+    # EV / GROWTH TECH (TSLA, RIVN, LCID)
+    # ----------------------------------------------------------------
+    elif sector == 'EV/Growth':
+        score = 50
+        if vix >= 30: score -= 22       # high-beta growth gets crushed
+        elif vix >= 25: score -= 12
+        elif vix < 15: score += 12
+        if hyg_chg <= -1.0: score -= 15 # growth needs cheap credit
+        elif hyg_chg >= 0.5: score += 8
+        if oil_chg >= 3: score += 5     # high oil → EV adoption tailwind (mild)
+        if spy_chg <= -2: score -= 15
+        elif spy_chg >= 1.5: score += 10
+        return max(5, min(95, score))
+
+    # ----------------------------------------------------------------
+    # GIG / PLATFORMS (UBER, LYFT, DASH, ABNB)
+    # ----------------------------------------------------------------
+    elif sector == 'Gig/Platforms':
+        score = 50
+        if vix >= 28: score -= 15
+        elif vix < 16: score += 8
+        if spy_chg <= -2: score -= 12
+        elif spy_chg >= 1: score += 6
+        if hyg_chg <= -1.0: score -= 10
+        return max(5, min(95, score))
+
+    # ----------------------------------------------------------------
+    # HEALTHCARE (hospitals, pharma, devices — NOT biotech)
+    # ----------------------------------------------------------------
+    elif sector == 'Healthcare':
+        score = 50
+        if vix >= 28: score += 12       # defensive rotation in fear
+        if spy_chg <= -2: score += 10
+        elif spy_chg >= 2: score -= 5
+        if oil_chg >= 4: score -= 5     # input costs
+        return max(5, min(95, score))
+
+    # ----------------------------------------------------------------
+    # CONSUMER (staples + discretionary combined)
+    # ----------------------------------------------------------------
+    elif sector == 'Consumer':
+        score = 50
+        if oil_chg >= 3: score -= 15    # fuel cost = disposable income squeeze
+        elif oil_chg >= 1.5: score -= 7
+        elif oil_chg <= -3: score += 10
+        if vix >= 28: score -= 10
+        if spy_chg <= -2: score -= 8
+        return max(5, min(95, score))
+
+    # ----------------------------------------------------------------
+    # TELECOM / MEDIA — defensive but rate-sensitive (capex debt)
+    # ----------------------------------------------------------------
+    elif sector == 'Telecom/Media':
+        score = 50
+        if vix >= 28: score += 10       # defensive rotation (stable cash flows)
+        elif vix >= 24: score += 5
+        if spy_chg <= -1.5: score += 5  # underperforms rallies, holds in sell-offs
+        elif spy_chg >= 2: score -= 8
+        if hyg_chg <= -1.0: score -= 12 # capex debt refinancing risk
+        elif hyg_chg >= 0.5: score += 5
+        return max(5, min(95, score))
+
+    # ----------------------------------------------------------------
+    # REITs — pure yield instruments, very rate-sensitive
+    # ----------------------------------------------------------------
+    elif sector == 'REITs':
+        score = 50
+        if vix >= 25: score += 8        # defensive/yield seeking
+        elif vix < 15: score -= 5       # rate rise in good times = REIT pain
+        if spy_chg <= -1.5: score += 5
+        if hyg_chg <= -1.0: score -= 12 # credit tightening = REIT financing risk
+        elif hyg_chg >= 0.5: score += 8
+        return max(5, min(95, score))
+
+    # ----------------------------------------------------------------
+    # UTILITIES — regulated, partially pass-through, less rate-sensitive than REITs
+    # ----------------------------------------------------------------
+    elif sector == 'Utilities':
+        score = 50
+        if vix >= 28: score += 12       # defensive safe-haven in stress
+        elif vix >= 22: score += 6
+        if spy_chg <= -2: score += 8
+        elif spy_chg >= 2: score -= 6   # underperforms in strong bull
+        if oil_chg >= 4: score -= 5     # gas generation cost
+        return max(5, min(95, score))
+
+    else:
+        return 50
+
+
+def _compute_cross_sectional_factors(tickers: List[str], all_info_data: Dict,
+                                      all_hist_data: Dict) -> Dict[str, Dict[str, float]]:
+    """
+    Compute Fama-French inspired cross-sectional factor scores.
+    Returns per-ticker percentile ranks (0-100) for momentum, low-vol, value, quality.
+    """
+    momentum_vals = {}
+    vol_vals = {}
+    value_vals = {}
+    quality_vals = {}
+
+    for t in tickers:
+        hist = all_hist_data.get(t)
+        info = all_info_data.get(t, {})
+        if hist is None or len(hist) < 60:
+            continue
+        close = hist['Close']
+
+        # MOMENTUM: 12-minus-1 month (skip most recent month)
+        try:
+            if len(close) >= 252:
+                mom = float((close.iloc[-21] / close.iloc[-252]) - 1) * 100
+            elif len(close) >= 126:
+                mom = float((close.iloc[-21] / close.iloc[-126]) - 1) * 100
+            else:
+                mom = float((close.iloc[-21] / close.iloc[-60]) - 1) * 100
+            if pd.isna(mom): mom = 0
+        except Exception:
+            mom = 0
+        momentum_vals[t] = mom
+
+        # LOW-VOL: inverse of 60-day realized volatility
+        try:
+            returns = close.pct_change().dropna()
+            vol_60 = float(returns.tail(60).std() * np.sqrt(252) * 100) if len(returns) >= 60 else 25
+            if pd.isna(vol_60): vol_60 = 25
+        except Exception:
+            vol_60 = 25
+        vol_vals[t] = vol_60
+
+        # VALUE: composite of earnings yield + FCF yield
+        try:
+            pe = float(info.get('trailingPE', 0) or 0)
+            earnings_yield = (1 / pe * 100) if pe > 0 else 0
+            fcf = float(info.get('freeCashflow', 0) or 0)
+            mktcap = float(info.get('marketCap', 0) or 0)
+            fcf_yield = (fcf / mktcap * 100) if mktcap > 0 else 0
+        except (TypeError, ValueError):
+            earnings_yield, fcf_yield = 0, 0
+        value_vals[t] = earnings_yield * 0.5 + fcf_yield * 0.5
+
+        # QUALITY: ROE + gross margin
+        try:
+            roe = float(info.get('returnOnEquity', 0) or 0) * 100
+            gm = float(info.get('grossMargins', 0) or 0) * 100
+        except (TypeError, ValueError):
+            roe, gm = 0, 0
+        quality_vals[t] = roe * 0.6 + gm * 0.4
+
+    def _to_percentile(vals, higher_is_better=True):
+        if not vals:
+            return {}
+        sorted_items = sorted(vals.items(), key=lambda x: x[1])
+        n = len(sorted_items)
+        result = {}
+        for rank, (ticker, _) in enumerate(sorted_items):
+            pct = (rank / max(n - 1, 1)) * 100
+            result[ticker] = pct if higher_is_better else (100 - pct)
+        return result
+
+    return {
+        t: {
+            'fama_momentum': _to_percentile(momentum_vals).get(t, 50),
+            'fama_low_vol': _to_percentile(vol_vals, higher_is_better=False).get(t, 50),
+            'fama_value': _to_percentile(value_vals).get(t, 50),
+            'fama_quality': _to_percentile(quality_vals).get(t, 50),
+        }
+        for t in tickers
+    }
 
 
 @st.cache_data(ttl=300)
@@ -786,11 +1356,13 @@ def _compute_macro_overlay() -> Dict[str, Any]:
     else:
         vix_score = 80
 
-    # MOVE stress
+    # MOVE stress (tightened: ≥110 now penalized more)
     if move >= 150:
         move_score = 5
     elif move >= 120:
         move_score = 20
+    elif move >= 110:
+        move_score = 30
     elif move >= 100:
         move_score = 40
     elif move >= 80:
@@ -876,6 +1448,22 @@ def _compute_macro_overlay() -> Dict[str, Any]:
     composite = max(5, min(95, composite))
 
     # =============================================
+    # Geopolitical multi-signal penalty
+    # When oil AND gold rise simultaneously, it signals coordinated
+    # flight-to-safety + supply shock — typical of geopolitical crises.
+    # This fires BEFORE markets fully price in the risk.
+    # =============================================
+    oil_raw_chg = macro['oil_chg']  # signed (positive = oil up)
+    geo_penalty = 0
+    if oil_raw_chg >= 1.5 and gold_chg >= 0.8:
+        geo_penalty = 15   # Strong geopolitical signal: both oil AND gold rising
+    elif oil_raw_chg >= 1.0 and gold_chg >= 0.5:
+        geo_penalty = 8    # Moderate coordinated move
+    elif oil_raw_chg >= 3.0 and gold_chg >= 1.5:
+        geo_penalty = 22   # Crisis-level coordinated spike
+    composite = max(5, min(95, composite - geo_penalty))
+
+    # =============================================
     # Sector-specific adjustments
     # =============================================
     # Oil direction matters for energy (up = good for energy, bad for consumers)
@@ -897,8 +1485,8 @@ def _compute_macro_overlay() -> Dict[str, Any]:
         # USD impact
         adj -= dxy_chg * betas.get('usd', 0) * 2
 
-        # Clamp adjustment to [-25, +25] points
-        sector_adjustments[sector] = max(-25, min(25, adj))
+        # Clamp adjustment to [-40, +40] points (widened for macro regime differentiation)
+        sector_adjustments[sector] = max(-40, min(40, adj))
 
     # Build descriptive alerts
     alerts = []
@@ -909,6 +1497,8 @@ def _compute_macro_overlay() -> Dict[str, Any]:
     if abs(macro['oil_chg']) >= 3:
         direction = "surging" if macro['oil_chg'] > 0 else "crashing"
         alerts.append(f"Oil {direction} {macro['oil_chg']:+.1f}% — geopolitical risk")
+    if geo_penalty > 0:
+        alerts.append(f"⚠️ Oil+Gold ambos subiendo ({macro['oil_chg']:+.1f}% / Gold {gold_chg:+.1f}%) — señal de tensión geopolítica coordinada")
     if hyg_chg <= -0.5:
         alerts.append(f"HYG {hyg_chg:+.1f}% — credit spreads widening")
     if gold_chg >= 1.5:
@@ -999,6 +1589,23 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
         macro_sector_adj = macro_overlay.get('sector_adjustments', {})
         macro_alerts = macro_overlay.get('alerts', [])
 
+        # Pre-compute cross-sectional factor ranks (Fama-French)
+        cross_sectional = _compute_cross_sectional_factors(tickers, all_info_data, all_hist_data)
+
+        # Pre-compute sector PE medians
+        sector_pe_map = {}
+        for _t in tickers:
+            _t_info = all_info_data.get(_t, {})
+            _t_sector = _t_info.get('sector', 'N/A')
+            _t_pe = _t_info.get('trailingPE', None) or _t_info.get('forwardPE', None)
+            try:
+                _t_pe = float(_t_pe) if _t_pe is not None else None
+                if _t_pe and not pd.isna(_t_pe) and 0 < _t_pe < 200:
+                    sector_pe_map.setdefault(_t_sector, []).append(_t_pe)
+            except (TypeError, ValueError):
+                pass
+        sector_pe_medians = {s: sorted(pes)[len(pes) // 2] for s, pes in sector_pe_map.items() if pes}
+
         for i, ticker in enumerate(tickers):
 
             try:
@@ -1021,13 +1628,17 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                 rs = gain / (loss + 0.0001)
                 rsi_series = 100 - (100 / (1 + rs))
                 rsi = float(rsi_series.iloc[-1]) if not rsi_series.empty else 50
+                if pd.isna(rsi): rsi = 50
 
                 # MACD
                 exp12 = close.ewm(span=12, adjust=False).mean()
                 exp26 = close.ewm(span=26, adjust=False).mean()
                 macd = exp12 - exp26
                 signal_line = macd.ewm(span=9, adjust=False).mean()
-                macd_bullish = bool(macd.iloc[-1] > signal_line.iloc[-1]) if not macd.empty else False
+                try:
+                    macd_bullish = bool(macd.iloc[-1] > signal_line.iloc[-1]) if not macd.empty else False
+                except (TypeError, ValueError):
+                    macd_bullish = False
 
                 # BB
                 sma20 = close.rolling(window=20).mean()
@@ -1035,6 +1646,9 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                 bb_upper = sma20 + (std20 * 2)
                 bb_lower = sma20 - (std20 * 2)
                 current_price = float(close.iloc[-1])
+                if pd.isna(current_price) or current_price <= 0:
+                    failed_tickers.append((ticker, 'Invalid price (NaN)'))
+                    continue
                 try:
                     _bb_up = float(bb_upper.iloc[-1]) if not bb_upper.empty else current_price * 1.1
                     _bb_lo = float(bb_lower.iloc[-1]) if not bb_lower.empty else current_price * 0.9
@@ -1049,20 +1663,31 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                 else:
                     bb_position_num, vp_position = 50, 'neutral'
 
-                # Momentum
-                momentum_1m = ((close.iloc[-1] / close.iloc[-20]) - 1) * 100 if len(close) >= 20 else 0
-                momentum_3m = ((close.iloc[-1] / close.iloc[-60]) - 1) * 100 if len(close) >= 60 else momentum_1m
+                # Momentum (with NaN guards)
+                try:
+                    momentum_1m = ((close.iloc[-1] / close.iloc[-20]) - 1) * 100 if len(close) >= 20 else 0
+                    momentum_3m = ((close.iloc[-1] / close.iloc[-60]) - 1) * 100 if len(close) >= 60 else momentum_1m
+                    if pd.isna(momentum_1m): momentum_1m = 0
+                    if pd.isna(momentum_3m): momentum_3m = 0
+                except (TypeError, ZeroDivisionError):
+                    momentum_1m, momentum_3m = 0, 0
 
                 # Volume
-                avg_volume = hist['Volume'].rolling(20).mean().iloc[-1] if len(hist) >= 20 else hist['Volume'].mean()
-                volume_ratio = float(hist['Volume'].iloc[-1] / avg_volume) if avg_volume > 0 else 1.0
+                try:
+                    avg_volume = hist['Volume'].rolling(20).mean().iloc[-1] if len(hist) >= 20 else hist['Volume'].mean()
+                    volume_ratio = float(hist['Volume'].iloc[-1] / avg_volume) if avg_volume > 0 else 1.0
+                    if pd.isna(volume_ratio): volume_ratio = 1.0
+                except (TypeError, ZeroDivisionError):
+                    volume_ratio = 1.0
 
                 # VWAP
                 typical_price = (hist['High'] + hist['Low'] + hist['Close']) / 3
                 vwap = (typical_price * hist['Volume']).cumsum() / hist['Volume'].cumsum()
                 current_vwap = float(vwap.iloc[-1]) if not vwap.empty else current_price
+                if pd.isna(current_vwap): current_vwap = current_price
 
                 price_val = float(info.get('currentPrice', info.get('regularMarketPrice', current_price)))
+                if pd.isna(price_val): price_val = current_price
 
                 # MACD signal string
                 if macd_bullish and momentum_1m > 3:
@@ -1125,19 +1750,135 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                     except Exception:
                         pass
 
-                # Fundamentals from info
-                roe = (info.get('returnOnEquity', 0) or 0) * 100
-                pe = info.get('trailingPE', info.get('forwardPE', 0)) or 20
-                pb = info.get('priceToBook', 0) or 3
-                ev_ebitda = info.get('enterpriseToEbitda', 0) or 15
-                profit_margin = (info.get('profitMargins', 0) or 0) * 100
-                gross_margin = (info.get('grossMargins', 0) or 0) * 100
-                operating_margin = (info.get('operatingMargins', 0) or 0) * 100
-                debt_to_equity = info.get('debtToEquity', 0) or 50
-                current_ratio_val = info.get('currentRatio', 0) or 1.5
-                dividend_yield = (info.get('dividendYield', 0) or 0) * 100
+                # Fundamentals from info (safe float conversion)
+                def _sf(val, default=0):
+                    """Safe float from yfinance info field."""
+                    try:
+                        v = float(val) if val is not None else default
+                        return default if pd.isna(v) else v
+                    except (TypeError, ValueError):
+                        return default
+
+                roe = _sf(info.get('returnOnEquity'), 0) * 100
+                pe = _sf(info.get('trailingPE'), 0) or _sf(info.get('forwardPE'), 0) or 20
+                pb = _sf(info.get('priceToBook'), 0) or 3
+                ev_ebitda = _sf(info.get('enterpriseToEbitda'), 0) or 15
+                profit_margin = _sf(info.get('profitMargins'), 0) * 100
+                gross_margin = _sf(info.get('grossMargins'), 0) * 100
+                operating_margin = _sf(info.get('operatingMargins'), 0) * 100
+                debt_to_equity = _sf(info.get('debtToEquity'), 0) or 50
+                current_ratio_val = _sf(info.get('currentRatio'), 0) or 1.5
+                dividend_yield = _sf(info.get('dividendYield'), 0) * 100
                 company_name = info.get('longName', info.get('shortName', ticker)) or ticker
                 sector = info.get('sector', 'N/A') or 'N/A'
+
+                # --- Real proxy calculations ---
+                # Momentum 1W: actual 5-day return
+                try:
+                    momentum_1w = ((close.iloc[-1] / close.iloc[-5]) - 1) * 100 if len(close) >= 5 else momentum_1m / 4
+                    if pd.isna(momentum_1w): momentum_1w = momentum_1m / 4
+                except (TypeError, ZeroDivisionError, IndexError):
+                    momentum_1w = momentum_1m / 4
+
+                # Momentum 6M: actual 126-day return
+                try:
+                    momentum_6m = ((close.iloc[-1] / close.iloc[-126]) - 1) * 100 if len(close) >= 126 else float(momentum_3m) * 1.5
+                    if pd.isna(momentum_6m): momentum_6m = float(momentum_3m) * 1.5
+                except (TypeError, ZeroDivisionError, IndexError):
+                    momentum_6m = float(momentum_3m) * 1.5
+
+                # ROIC: prefer returnOnAssets, fallback to roe * equity_ratio
+                try:
+                    _roa = info.get('returnOnAssets', None)
+                    if _roa is not None:
+                        _roa = float(_roa)
+                    if _roa and not pd.isna(_roa):
+                        roic = _roa * 100
+                    elif roe:
+                        _total_assets = float(info.get('totalAssets', 0) or 0)
+                        _total_equity = float(info.get('totalStockholderEquity', 0) or 0)
+                        _eq_ratio = (_total_equity / _total_assets) if _total_assets > 0 else 0.5
+                        roic = roe * _eq_ratio
+                    else:
+                        roic = 12
+                except (TypeError, ValueError):
+                    roic = roe * 0.8 if roe else 12
+
+                # Debt/EBITDA: real calculation
+                try:
+                    _total_debt = info.get('totalDebt', None)
+                    _ebitda = info.get('ebitda', None)
+                    _total_debt = float(_total_debt) if _total_debt is not None else None
+                    _ebitda = float(_ebitda) if _ebitda is not None else None
+                    if _total_debt and _ebitda and not pd.isna(_total_debt) and not pd.isna(_ebitda) and _ebitda > 0:
+                        debt_ebitda = _total_debt / _ebitda
+                    else:
+                        debt_ebitda = debt_to_equity / 30 if debt_to_equity else 1.67
+                except (TypeError, ValueError):
+                    debt_ebitda = debt_to_equity / 30 if debt_to_equity else 1.67
+
+                # Interest Coverage: EBITDA / interest expense
+                try:
+                    _interest_exp = info.get('interestExpense', None)
+                    _interest_exp = float(_interest_exp) if _interest_exp is not None else None
+                    _ebitda_f = float(info.get('ebitda', 0) or 0)
+                    if _ebitda_f and _interest_exp and not pd.isna(_interest_exp) and abs(_interest_exp) > 0:
+                        interest_coverage = _ebitda_f / abs(_interest_exp)
+                        interest_coverage = max(0, min(100, interest_coverage))
+                    else:
+                        interest_coverage = 10
+                except (TypeError, ValueError):
+                    interest_coverage = 10
+
+                # Analyst Revisions: from recommendationMean + target upside
+                try:
+                    _rec_mean = info.get('recommendationMean', None)
+                    _target_price = info.get('targetMeanPrice', None)
+                    _rec_mean = float(_rec_mean) if _rec_mean is not None else None
+                    _target_price = float(_target_price) if _target_price is not None else None
+                    if _rec_mean and not pd.isna(_rec_mean) and _rec_mean > 0:
+                        _target_upside = ((_target_price / price_val) - 1) * 100 if _target_price and price_val > 0 else 0
+                        analyst_revisions = (3.0 - _rec_mean) * 5 + _target_upside / 10
+                    else:
+                        analyst_revisions = float(momentum_3m) * 0.5
+                except (TypeError, ValueError):
+                    analyst_revisions = float(momentum_3m) * 0.5
+
+                # Earnings Surprise: quarterly growth + revenue growth
+                try:
+                    _eq_growth = info.get('earningsQuarterlyGrowth', None)
+                    _rev_growth = info.get('revenueGrowth', None)
+                    _eq_growth = float(_eq_growth) if _eq_growth is not None else None
+                    _rev_growth = float(_rev_growth) if _rev_growth is not None else None
+                    if _eq_growth is not None and not pd.isna(_eq_growth):
+                        earnings_surprise = _eq_growth * 70
+                        if _rev_growth is not None and not pd.isna(_rev_growth):
+                            earnings_surprise += _rev_growth * 30
+                    else:
+                        earnings_surprise = float(momentum_1m) * 0.8
+                except (TypeError, ValueError):
+                    earnings_surprise = float(momentum_1m) * 0.8
+
+                # Sector PE Median: from pre-computed medians
+                _sector_pe_med = sector_pe_medians.get(sector, 20)
+
+                # Dividend Growth: from 5yr avg vs current
+                try:
+                    _five_yr_avg_div = info.get('fiveYearAvgDividendYield', None)
+                    _five_yr_avg_div = float(_five_yr_avg_div) if _five_yr_avg_div is not None else None
+                    _current_div_yield = float(info.get('dividendYield', 0) or 0) * 100
+                    if _five_yr_avg_div and _current_div_yield > 0 and not pd.isna(_five_yr_avg_div):
+                        dividend_growth = _current_div_yield - _five_yr_avg_div
+                    else:
+                        dividend_growth = 3 if _current_div_yield > 0 else 0
+                except (TypeError, ValueError):
+                    dividend_growth = 3
+
+                # Macro regime boost (direct sector rotation score)
+                _macro_regime_boost = _calc_macro_regime_boost(sector, macro_overlay, ticker=ticker)
+
+                # Cross-sectional Fama factors
+                _cs = cross_sectional.get(ticker, {})
 
                 scoring_data = {
                     'ticker': ticker,
@@ -1148,24 +1889,25 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                     'volume_profile_position': vp_position,
                     'bollinger_position': bb_position_num,
                     'volume_ratio': volume_ratio,
-                    'momentum_1w': momentum_1m / 4,
+                    'momentum_1w': momentum_1w,
                     'momentum_1m': float(momentum_1m),
                     'momentum_3m': float(momentum_3m),
-                    'momentum_6m': float(momentum_3m) * 1.5,
+                    'momentum_6m': momentum_6m,
                     'pe_ratio': pe, 'pb_ratio': pb, 'ev_ebitda': ev_ebitda,
-                    'roe': roe or 15, 'roic': roe * 0.8 if roe else 12,
+                    'roe': roe or 15, 'roic': roic,
                     'profit_margin': profit_margin or 10, 'gross_margin': gross_margin or 30,
                     'operating_margin': operating_margin or 15,
-                    'debt_to_equity': debt_to_equity, 'debt_ebitda': debt_to_equity / 30,
-                    'current_ratio': current_ratio_val, 'interest_coverage': 10,
-                    'dividend_yield': dividend_yield, 'dividend_growth': 3,
-                    'sector': sector, 'company_name': company_name, 'sector_pe_median': 20,
+                    'debt_to_equity': debt_to_equity, 'debt_ebitda': debt_ebitda,
+                    'current_ratio': current_ratio_val, 'interest_coverage': interest_coverage,
+                    'dividend_yield': dividend_yield, 'dividend_growth': dividend_growth,
+                    'sector': sector, 'company_name': company_name,
+                    'sector_pe_median': _sector_pe_med,
                     'congress_score': _calculate_speculative_score(
                         float(momentum_1m), float(momentum_3m), roe or 15, volume_ratio),
                     'news_sentiment': min(max(50 + (float(momentum_1m) * 2.0) + (float(momentum_3m) * 0.8), 10), 90),
                     'options_flow': min(max(50 + ((volume_ratio - 1) * 20) + (float(momentum_1m) * 1.0), 10), 90),
-                    'analyst_revisions': float(momentum_3m) * 0.5,
-                    'earnings_surprise': float(momentum_1m) * 0.8,
+                    'analyst_revisions': analyst_revisions,
+                    'earnings_surprise': earnings_surprise,
                     'konkorde_score': konkorde_score, 'konkorde_signal': konkorde_signal,
                     'trendline_score': trendline_data.get('trendline_score', 50),
                     'trendline_breakout_imminent': trendline_data.get('breakout_imminent', False),
@@ -1185,13 +1927,20 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                     # Macro overlay — comprehensive real-time macro risk
                     'macro_composite': macro_composite,
                     'macro_sector_adj': macro_sector_adj.get(
-                        _map_yf_sector_to_macro(sector), 0),
+                        _map_yf_sector_to_macro(sector, ticker), 0),
                     'macro_alerts': macro_alerts,
                     'macro_oil_chg': macro_overlay.get('oil_chg', 0),
                     'macro_vix': macro_overlay.get('vix', 20),
                     'macro_move': macro_overlay.get('move', 100),
                     'macro_hyg_chg': macro_overlay.get('hyg_chg', 0),
                     'macro_spy_chg': macro_overlay.get('spy_chg', 0),
+                    # Macro regime boost (direct sector rotation)
+                    'macro_regime_boost': _macro_regime_boost,
+                    # Cross-sectional Fama-French factors
+                    'fama_momentum': _cs.get('fama_momentum', 50),
+                    'fama_low_vol': _cs.get('fama_low_vol', 50),
+                    'fama_value': _cs.get('fama_value', 50),
+                    'fama_quality': _cs.get('fama_quality', 50),
                 }
 
                 result = scorer.calculate_all_horizons(scoring_data)
@@ -1214,9 +1963,16 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                 continue
 
         if failed_tickers:
-            failed_list = ', '.join([f"{t} ({e[:30]})" for t, e in failed_tickers[:5]])
-            extra = f" (+{len(failed_tickers) - 5} more)" if len(failed_tickers) > 5 else ""
-            st.warning(f"Could not score {len(failed_tickers)} tickers: {failed_list}{extra}")
+            failed_list = ', '.join([f"{t}" for t, e in failed_tickers[:8]])
+            extra = f" (+{len(failed_tickers) - 8} more)" if len(failed_tickers) > 8 else ""
+            total = len(tickers)
+            pct = len(failed_tickers) / total * 100
+            # Only show warning if > 2% fail; otherwise just a caption
+            msg = f"{len(failed_tickers)}/{total} tickers sin datos ({pct:.0f}%): {failed_list}{extra}"
+            if pct > 2:
+                st.warning(f"⚠ {msg}")
+            else:
+                st.caption(f"ℹ {msg} — suele ser normal para ciertos tickers internacionales.")
 
         return pd.DataFrame(results) if results else pd.DataFrame()
 
@@ -2035,6 +2791,7 @@ def _get_fallback_risk_data() -> Dict[str, Any]:
     }
 
 
+@st.cache_data(ttl=600, show_spinner=False)
 def get_score_explanation(ticker: str, skip_congress: bool = False, include_options: bool = False) -> Dict[str, Any]:
     """
     Generate a comprehensive explanation of WHY a stock got its score.
@@ -2412,6 +3169,19 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
     elif momentum_1m < -3:
         st_factors.append(('Momentum 1M negativo', -5, f'{momentum_1m:.1f}% en 1 mes', 'bearish'))
 
+    # Contrarian / Quality dip factors
+    roe_val = roe  # already extracted from stock_data above
+    margin_val = profit_margin  # already extracted from stock_data above
+    if isinstance(roe_val, (int, float)) and roe_val > 15 and momentum_1m < -3 and rsi < 45:
+        st_factors.append(('Quality dip (contrarian)', +5,
+            f'ROE={roe_val:.0f}% con momentum {momentum_1m:+.1f}% y RSI={rsi:.0f} — posible entrada contrarian en accion de calidad', 'bullish'))
+    if pct_from_high < -15 and pct_from_high >= -30 and momentum_1m < -3:
+        st_factors.append(('Correccion significativa', +4,
+            f'{pct_from_high:.0f}% desde max 52W con momentum negativo — potencial rebote tecnico', 'bullish'))
+    if vix_val > 25 and rsi < 45 and isinstance(margin_val, (int, float)) and margin_val > 10:
+        st_factors.append(('VIX elevado + RSI bajo (contrarian)', +3,
+            f'VIX={vix_val:.0f} con RSI={rsi:.0f} en empresa con margen {margin_val:.0f}% — panico puede ser oportunidad', 'bullish'))
+
     # Volume
     if volume_ratio > 2.5:
         st_factors.append(('Volumen muy alto', +7, f'{volume_ratio:.1f}x vs media - fuerte interes institucional', 'bullish'))
@@ -2517,7 +3287,7 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
                 f'SPY {_macro_spy:+.1f}% — presion vendedora', 'bearish'))
 
         # Sector-specific macro impact
-        _sector_macro = _map_yf_sector_to_macro(sector)
+        _sector_macro = _map_yf_sector_to_macro(sector, ticker)
         _sect_adj = _macro.get('sector_adjustments', {}).get(_sector_macro, 0)
         if _sect_adj <= -10:
             st_factors.append((f'Sector ({_sector_macro}) afectado', -6,
@@ -3006,6 +3776,83 @@ def black_scholes_delta(S: float, K: float, T: float, r: float, sigma: float,
         delta = -norm.cdf(-d1)
 
     return delta
+
+
+def calculate_vanna(S: float, K: float, T: float, r: float, sigma: float) -> float:
+    """
+    Calculate Vanna (dDelta/dVol) using Black-Scholes.
+    Vanna = -e^(-qT) * N'(d1) * d2 / sigma
+    Measures how delta changes with implied volatility.
+    """
+    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+        return 0.0
+    sqrt_T = np.sqrt(T)
+    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * sqrt_T)
+    d2 = d1 - sigma * sqrt_T
+    n_prime_d1 = norm.pdf(d1)
+    return -n_prime_d1 * d2 / sigma
+
+
+def calculate_charm(S: float, K: float, T: float, r: float, sigma: float,
+                    option_type: str = 'call') -> float:
+    """
+    Calculate Charm (dDelta/dTime) using Black-Scholes.
+    Measures how delta decays over time (delta bleed).
+    Positive charm = delta increasing as time passes.
+    """
+    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+        return 0.0
+    sqrt_T = np.sqrt(T)
+    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * sqrt_T)
+    d2 = d1 - sigma * sqrt_T
+    n_prime_d1 = norm.pdf(d1)
+
+    charm_val = -n_prime_d1 * (2 * r * T - d2 * sigma * sqrt_T) / (2 * T * sigma * sqrt_T)
+    if option_type == 'put':
+        charm_val += r * np.exp(-r * T) * norm.cdf(-d1) if r != 0 else 0
+    return charm_val
+
+
+def calculate_position_greeks(strategy: dict, S: float, T: float, r: float = 0.05) -> dict:
+    """
+    Calculate aggregate position Greeks for a strategy.
+    Returns net delta, gamma, vanna, charm for the whole position.
+    """
+    strikes = strategy.get('strikes', {})
+    net_delta = 0.0
+    net_vanna = 0.0
+    net_charm = 0.0
+    details = []
+
+    for leg_name, K in strikes.items():
+        if not isinstance(K, (int, float)) or K <= 0:
+            continue
+        is_call = 'call' in leg_name.lower()
+        is_long = 'buy' in leg_name.lower()
+        opt_type = 'call' if is_call else 'put'
+        sign = 1 if is_long else -1
+
+        # Use average IV estimate (30%)
+        sigma = 0.30
+        delta = black_scholes_delta(S, K, T, r, sigma, opt_type) * sign
+        vanna = calculate_vanna(S, K, T, r, sigma) * sign
+        charm = calculate_charm(S, K, T, r, sigma, opt_type) * sign
+
+        net_delta += delta
+        net_vanna += vanna
+        net_charm += charm
+        details.append({
+            'leg': leg_name, 'strike': K, 'type': opt_type,
+            'side': 'long' if is_long else 'short',
+            'delta': delta, 'vanna': vanna, 'charm': charm
+        })
+
+    return {
+        'net_delta': net_delta,
+        'net_vanna': net_vanna,
+        'net_charm': net_charm,
+        'legs': details,
+    }
 
 
 def find_25delta_strikes(calls_df: pd.DataFrame, puts_df: pd.DataFrame,
@@ -3559,7 +4406,13 @@ def recommend_options_strategy(price: float, skew: float, gamma_regime: str,
             }
 
     else:  # NEUTRAL
-        if iv_high:
+        # Check if expected move is contained within GEX walls (Iron Condor safe)
+        wall_range_pct = ((call_wall - put_wall) / price * 100) if call_wall > put_wall and price > 0 else 0
+        em_contained = wall_range_pct > 0 and expected_move_pct < wall_range_pct * 0.7
+        gamma_positive = gamma_regime == 'POSITIVE GAMMA'
+
+        if iv_high and (em_contained or gamma_positive):
+            # Iron Condor: only when EM is contained OR gamma is positive (pinning)
             sc_k, sc_r, sc_liq = _find_strike(calls_df, otm_call_target, 'above')
             bc_k, bc_r, bc_liq = _find_strike(calls_df, sc_k * 1.04, 'above')
             sp_k, sp_r, sp_liq = _find_strike(puts_df, otm_put_target, 'below')
@@ -3569,10 +4422,11 @@ def recommend_options_strategy(price: float, skew: float, gamma_regime: str,
             wing_width = max(bc_k - sc_k, sp_k - bp_k)
             max_loss = (wing_width - credit) if wing_width > credit else wing_width
             rr = (credit / max_loss) if max_loss > 0 else 0
+            pop_pct = max(0, min(100, (1 - expected_move_pct / wall_range_pct) * 100)) if wall_range_pct > 0 else 50
             strategy = {
                 'name': 'IRON CONDOR',
                 'market_bias': 'neutral / range-bound',
-                'description': f'Sell ${sp_k:.0f}P/${sc_k:.0f}C — collect premium within GEX range',
+                'description': f'Sell ${sp_k:.0f}P/${sc_k:.0f}C — EM ±{expected_move_pct:.1f}% contained in {wall_range_pct:.0f}% wall range',
                 'strikes': {'sell_put': sp_k, 'buy_put': bp_k, 'sell_call': sc_k, 'buy_call': bc_k},
                 'strike_details': {
                     'sell_call': sc_d.get('text', ''), 'buy_call': bc_d.get('text', ''),
@@ -3581,10 +4435,37 @@ def recommend_options_strategy(price: float, skew: float, gamma_regime: str,
                 'greeks_impact': 'Short Vega, Pos Theta, Near-zero Delta',
                 'max_profit': credit * 100, 'max_loss': max_loss * 100,
                 'risk_reward': f'{rr:.2f}:1 (credit/risk)',
-                'pros': [f'IV high ({avg_iv:.0f}%) = rich premium', f'Credit: ${credit*100:.0f}/contract', 'Theta income daily'],
+                'pop': f'{pop_pct:.0f}%',
+                'pros': [f'IV high ({avg_iv:.0f}%) = rich premium', f'POP ~{pop_pct:.0f}% (EM < wall range)', f'Credit: ${credit*100:.0f}/contract'],
                 'cons': ['Loses on breakout past wings', f'Max loss: ${max_loss*100:.0f}/contract'],
                 'risk_level': 'medium',
                 'liquidity': min(sc_liq, sp_liq),
+            }
+        elif iv_high and not em_contained and not gamma_positive:
+            # EM exceeds walls + negative gamma → Long Volatility instead
+            buy_c_k, buy_c_r, buy_c_liq = _find_strike(calls_df, price * 1.0, 'above')
+            buy_p_k, buy_p_r, buy_p_liq = _find_strike(puts_df, price * 1.0, 'below')
+            buy_c_d = _strike_detail(buy_c_r)
+            buy_p_d = _strike_detail(buy_p_r)
+            straddle_cost = buy_c_d.get('mid', 0) + buy_p_d.get('mid', 0)
+            be_up = buy_c_k + straddle_cost
+            be_dn = buy_p_k - straddle_cost
+            strategy = {
+                'name': 'LONG STRADDLE',
+                'market_bias': 'volatile / breakout expected',
+                'description': f'Buy ${buy_c_k:.0f}C + ${buy_p_k:.0f}P — EM ±{expected_move_pct:.1f}% exceeds {wall_range_pct:.0f}% wall range',
+                'strikes': {'buy_call': buy_c_k, 'buy_put': buy_p_k},
+                'strike_details': {
+                    'buy_call': buy_c_d.get('text', ''), 'buy_put': buy_p_d.get('text', ''),
+                },
+                'greeks_impact': 'Long Vega, Long Gamma, Neg Theta',
+                'max_profit': 'Unlimited', 'max_loss': straddle_cost * 100,
+                'breakeven': f'${be_dn:.0f} / ${be_up:.0f}',
+                'risk_reward': f'Unlimited / ${straddle_cost*100:.0f}',
+                'pros': [f'EM (±{expected_move_pct:.1f}%) > wall range ({wall_range_pct:.0f}%)', 'Negative gamma amplifies moves', 'Profits in either direction'],
+                'cons': [f'Cost: ${straddle_cost*100:.0f}/contract', f'Theta decay: ~${straddle_cost/dte*100:.0f}/day'],
+                'risk_level': 'medium-high',
+                'liquidity': min(buy_c_liq, buy_p_liq),
             }
         else:
             sell_k, sell_r, sell_liq = _find_strike(puts_df, price * 0.95, 'below')

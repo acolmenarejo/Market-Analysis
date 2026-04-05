@@ -63,60 +63,66 @@ class MultiHorizonResult:
 # Strategy: Quality fundamentals GATE the contrarian signal. Bad quality + oversold = value trap.
 
 SHORT_TERM_WEIGHTS = {
-    # Technical signals (30%)
-    'rsi': 0.06,                     # 0.28 → 0.30
+    # Technical signals (26%)
+    'rsi': 0.05,
     'macd': 0.04,
-    'bollinger_position': 0.04,
+    'bollinger_position': 0.03,
     'konkorde': 0.04,
-    'konkorde_divergence': 0.03,
+    'konkorde_divergence': 0.02,
     'trendline_breakout': 0.04,
-    'rsi_crossover': 0.03,
+    'rsi_crossover': 0.02,
     'volume_profile': 0.02,
 
-    # Mean-reversion (16%)
-    'mean_reversion': 0.07,
+    # Mean-reversion (14%)
+    'mean_reversion': 0.06,
     'iv_percentile': 0.04,
-    'skew_score': 0.03,
+    'skew_score': 0.02,
     'vix_regime': 0.02,
 
-    # Momentum (12%) — blended
-    'momentum_1w': 0.04,
-    'momentum_1m': 0.05,
+    # Momentum (10%)
+    'momentum_1w': 0.03,
+    'momentum_1m': 0.04,
     'relative_strength': 0.03,
 
-    # MACRO OVERLAY (14%) — VIX, MOVE, oil, credit, geopolitical
+    # MACRO OVERLAY (22%) — VIX, MOVE, oil, credit, sector rotation
     'macro_overlay': 0.08,           # Composite macro risk score
-    'macro_sector_impact': 0.06,     # Sector-specific macro adjustment
+    'macro_sector_impact': 0.08,     # Sector-specific macro adjustment
+    'macro_regime_boost': 0.06,      # Direct sector rotation score
 
-    # Speculative + Quality (28%)
-    'congress_score': 0.08,
-    'news_sentiment': 0.07,
-    'options_flow': 0.06,
-    'quality_gate': 0.07,
+    # Speculative + Quality (20%)
+    'congress_score': 0.06,
+    'news_sentiment': 0.04,
+    'options_flow': 0.04,
+    'quality_gate': 0.06,
+
+    # Factor Model (8%)
+    'fama_momentum': 0.04,
+    'fama_low_vol': 0.04,
 }  # Total: 1.00
 
 MEDIUM_TERM_WEIGHTS = {
-    # Quality fundamentals (34%)
-    'roe': 0.08,
-    'roic': 0.08,
-    'margin_trend': 0.06,
-    'debt_trend': 0.05,
-    'fcf_quality_mt': 0.04,
-    'quality_gate': 0.03,
+    # Quality fundamentals (28%)
+    'roe': 0.07,
+    'roic': 0.07,
+    'margin_trend': 0.05,
+    'debt_trend': 0.04,
+    'fcf_quality_mt': 0.03,
+    'quality_gate': 0.02,
 
-    # Contrarian (12%)
-    'mean_reversion': 0.05,
+    # Contrarian (10%)
+    'mean_reversion': 0.04,
     'sector_rs': 0.03,
-    'short_interest': 0.02,
+    'short_interest': 0.01,
     'vix_regime': 0.02,
 
-    # MACRO OVERLAY (12%)
-    'macro_overlay': 0.07,
-    'macro_sector_impact': 0.05,
+    # MACRO OVERLAY (18%)
+    'macro_overlay': 0.06,
+    'macro_sector_impact': 0.06,
+    'macro_regime_boost': 0.06,
 
-    # Momentum (18%) — blended
-    'momentum_3m': 0.06,
-    'momentum_6m': 0.05,
+    # Momentum (16%)
+    'momentum_3m': 0.05,
+    'momentum_6m': 0.04,
     'analyst_revisions': 0.04,
     'earnings_momentum': 0.03,
 
@@ -124,47 +130,96 @@ MEDIUM_TERM_WEIGHTS = {
     'trend_strength': 0.05,
     'support_resistance': 0.05,
 
-    # Speculative (14%)
-    'congress_score': 0.06,
-    'institutional_flow': 0.08,
+    # Speculative (12%)
+    'congress_score': 0.05,
+    'institutional_flow': 0.07,
+
+    # Factor Model (6%)
+    'fama_value': 0.03,
+    'fama_quality': 0.03,
 }  # Total: 1.00
 
 LONG_TERM_WEIGHTS = {
-    # Value (26%)
-    'pe_percentile': 0.06,
+    # Value (24%)
+    'pe_percentile': 0.05,
     'pb_percentile': 0.04,
-    'ev_ebitda_percentile': 0.05,
+    'ev_ebitda_percentile': 0.04,
     'fcf_yield': 0.06,
     'peg_ratio': 0.03,
     'quality_gate': 0.02,
 
-    # Quality (29%)
+    # Quality (27%)
     'roe': 0.07,
     'roic': 0.07,
-    'margin_stability': 0.06,
-    'moat_score': 0.05,
+    'margin_stability': 0.05,
+    'moat_score': 0.04,
     'fcf_quality': 0.04,
 
-    # Stability (19%)
-    'debt_ebitda': 0.06,
+    # Stability (17%)
+    'debt_ebitda': 0.05,
     'interest_coverage': 0.04,
     'dividend_stability': 0.04,
-    'earnings_stability': 0.03,
+    'earnings_stability': 0.02,
     'vix_regime': 0.02,
 
-    # MACRO OVERLAY (8%)
-    'macro_overlay': 0.05,
-    'macro_sector_impact': 0.03,
+    # MACRO OVERLAY (12%)
+    'macro_overlay': 0.04,
+    'macro_sector_impact': 0.04,
+    'macro_regime_boost': 0.04,
 
-    # Speculative (10%)
-    'congress_long_term': 0.05,
-    'insider_activity': 0.05,
+    # Speculative (8%)
+    'congress_long_term': 0.04,
+    'insider_activity': 0.04,
 
-    # Contrarian (8%)
-    'mean_reversion': 0.03,
-    'sector_rs': 0.03,
-    'short_interest': 0.02,
+    # Contrarian (4%)
+    'mean_reversion': 0.02,
+    'sector_rs': 0.02,
+
+    # Factor Model (8%)
+    'fama_value': 0.04,
+    'fama_quality': 0.04,
 }  # Total: 1.00
+
+
+# Regime-adaptive weight shifts for strong macro environments
+REGIME_WEIGHT_SHIFTS = {
+    'strong_macro': {
+        'macro_sector_impact': +0.06,
+        'macro_regime_boost': +0.04,
+        'news_sentiment': -0.03,
+        'congress_score': -0.03,
+        'options_flow': -0.02,
+        'skew_score': -0.02,
+    },
+    'crisis': {
+        'vix_regime': +0.04,
+        'macro_overlay': +0.04,
+        'quality_gate': +0.04,
+        'momentum_1w': -0.03,
+        'congress_score': -0.04,
+        'options_flow': -0.03,
+        'fama_momentum': -0.02,
+    },
+}
+
+
+def _detect_macro_regime(data: Dict[str, Any]) -> str:
+    """
+    Detect current macro regime from scoring_data.
+    Returns: 'strong_macro' | 'crisis' | 'low_vol_grind' | 'normal'
+    """
+    oil_chg = abs(data.get('macro_oil_chg', 0))
+    spy_chg = data.get('macro_spy_chg', 0)
+    vix = data.get('macro_vix', 20)
+    hyg_chg = abs(data.get('macro_hyg_chg', 0))
+
+    if vix >= 32 and spy_chg <= -2:
+        return 'crisis'
+    if oil_chg >= 3 or abs(spy_chg) >= 2 or vix >= 28 or hyg_chg >= 1:
+        return 'strong_macro'
+    if vix < 14 and -0.5 <= spy_chg <= 1.0:
+        return 'low_vol_grind'
+    return 'normal'
 
 
 class MultiHorizonScorer:
@@ -207,30 +262,53 @@ class MultiHorizonScorer:
 
         return min(max(percentile, 0), 100)
 
-    def _get_signal(self, score: float) -> Signal:
+    def _get_signal(self, score: float, horizon: str = 'short_term') -> Signal:
         """
-        Convierte score en señal - umbrales alineados con Excel original.
+        Convierte score en señal con umbrales por horizonte.
 
-        Original Excel thresholds:
-        - STRONG BUY: Score >= 60 AND Upside >= 10%
-        - BUY: Score >= 60 AND Upside >= 0%
-        - ACCUMULATE: Score >= 50
-        - HOLD: Score 40-50
-        - REDUCE: Score 30-40
-        - SELL: Score < 30
+        Short-term uses wider bands (more volatile signals).
+        Long-term uses tighter bands centered on fundamentals.
         """
-        if score >= 60:
-            return Signal.STRONG_BUY
-        elif score >= 55:
-            return Signal.BUY
-        elif score >= 50:
-            return Signal.ACCUMULATE
-        elif score >= 40:
-            return Signal.HOLD
-        elif score >= 30:
-            return Signal.REDUCE
-        else:
-            return Signal.SELL
+        if horizon == 'short_term':
+            # ST: wider spread, easier to reach extremes
+            if score >= 66:
+                return Signal.STRONG_BUY
+            elif score >= 57:
+                return Signal.BUY
+            elif score >= 50:
+                return Signal.ACCUMULATE
+            elif score >= 42:
+                return Signal.HOLD
+            elif score >= 35:
+                return Signal.REDUCE
+            else:
+                return Signal.SELL
+        elif horizon == 'medium_term':
+            if score >= 63:
+                return Signal.STRONG_BUY
+            elif score >= 56:
+                return Signal.BUY
+            elif score >= 49:
+                return Signal.ACCUMULATE
+            elif score >= 41:
+                return Signal.HOLD
+            elif score >= 33:
+                return Signal.REDUCE
+            else:
+                return Signal.SELL
+        else:  # long_term
+            if score >= 62:
+                return Signal.STRONG_BUY
+            elif score >= 55:
+                return Signal.BUY
+            elif score >= 48:
+                return Signal.ACCUMULATE
+            elif score >= 40:
+                return Signal.HOLD
+            elif score >= 32:
+                return Signal.REDUCE
+            else:
+                return Signal.SELL
 
     def calculate_short_term_score(
         self,
@@ -466,22 +544,41 @@ class MultiHorizonScorer:
         else:
             components['quality_gate'] = 30
 
-        # === MACRO OVERLAY (14%) ===
+        # === MACRO OVERLAY (22%) ===
         # Composite macro risk: VIX + MOVE + Oil + Credit + Gold + SPY
-        # Score 0-100: low = extreme stress (bearish), high = calm (bullish)
         macro_composite = data.get('macro_composite', 50)
         components['macro_overlay'] = macro_composite
 
-        # Sector-specific macro adjustment
-        # Converts sector beta adjustment (-25 to +25) into 0-100 score
+        # Sector-specific macro adjustment (-40 to +40) → 0-100 score
         macro_sector_adj = data.get('macro_sector_adj', 0)
-        components['macro_sector_impact'] = max(5, min(95, 50 + macro_sector_adj * 2))
+        components['macro_sector_impact'] = max(5, min(95, 50 + macro_sector_adj * 2.25))
+
+        # Direct sector rotation score (0-100)
+        components['macro_regime_boost'] = data.get('macro_regime_boost', 50)
+
+        # === FACTOR MODEL (8%) ===
+        components['fama_momentum'] = data.get('fama_momentum', 50)
+        components['fama_low_vol'] = data.get('fama_low_vol', 50)
+
+        # === REGIME-ADAPTIVE WEIGHTS ===
+        regime = _detect_macro_regime(data)
+        if regime in REGIME_WEIGHT_SHIFTS:
+            active_weights = dict(weights)
+            for k, delta in REGIME_WEIGHT_SHIFTS[regime].items():
+                if k in active_weights:
+                    active_weights[k] = max(0, active_weights[k] + delta)
+        else:
+            active_weights = weights
 
         # Calcular score total
         total = 0
-        for factor, weight in weights.items():
+        for factor, weight in active_weights.items():
             if factor in components:
                 total += components[factor] * weight
+
+        # Conviction amplifier: expand score range for short-term
+        total = 50 + (total - 50) * 1.4
+        total = max(5, min(95, total))
 
         # Calcular confianza basada en disponibilidad de datos
         available = sum(1 for f in weights.keys() if f in components and components[f] != 50)
@@ -493,7 +590,7 @@ class MultiHorizonScorer:
         return HorizonScore(
             horizon=Horizon.SHORT_TERM,
             total_score=round(total, 1),
-            signal=self._get_signal(total),
+            signal=self._get_signal(total, 'short_term'),
             components=components,
             explanation=explanation,
             confidence=round(confidence, 1)
@@ -685,10 +782,15 @@ class MultiHorizonScorer:
         else:
             components['quality_gate'] = 30
 
-        # === MACRO OVERLAY (12%) ===
+        # === MACRO OVERLAY (18%) ===
         components['macro_overlay'] = data.get('macro_composite', 50)
         macro_sector_adj = data.get('macro_sector_adj', 0)
-        components['macro_sector_impact'] = max(5, min(95, 50 + macro_sector_adj * 2))
+        components['macro_sector_impact'] = max(5, min(95, 50 + macro_sector_adj * 2.25))
+        components['macro_regime_boost'] = data.get('macro_regime_boost', 50)
+
+        # === FACTOR MODEL (6%) ===
+        components['fama_value'] = data.get('fama_value', 50)
+        components['fama_quality'] = data.get('fama_quality', 50)
 
         # === ESPECULATIVO ===
 
@@ -701,6 +803,10 @@ class MultiHorizonScorer:
             if factor in components:
                 total += components[factor] * weight
 
+        # Moderate amplifier for medium-term
+        total = 50 + (total - 50) * 1.2
+        total = max(5, min(95, total))
+
         # Calcular confianza
         available = sum(1 for f in weights.keys() if f in components and components[f] != 50)
         confidence = (available / len(weights)) * 100
@@ -710,7 +816,7 @@ class MultiHorizonScorer:
         return HorizonScore(
             horizon=Horizon.MEDIUM_TERM,
             total_score=round(total, 1),
-            signal=self._get_signal(total),
+            signal=self._get_signal(total, 'medium_term'),
             components=components,
             explanation=explanation,
             confidence=round(confidence, 1)
@@ -936,10 +1042,15 @@ class MultiHorizonScorer:
         else:
             components['quality_gate'] = 35
 
-        # === MACRO OVERLAY (8%) ===
+        # === MACRO OVERLAY (12%) ===
         components['macro_overlay'] = data.get('macro_composite', 50)
         macro_sector_adj = data.get('macro_sector_adj', 0)
-        components['macro_sector_impact'] = max(5, min(95, 50 + macro_sector_adj * 2))
+        components['macro_sector_impact'] = max(5, min(95, 50 + macro_sector_adj * 2.25))
+        components['macro_regime_boost'] = data.get('macro_regime_boost', 50)
+
+        # === FACTOR MODEL (8%) ===
+        components['fama_value'] = data.get('fama_value', 50)
+        components['fama_quality'] = data.get('fama_quality', 50)
 
         # === ESPECULATIVO ===
 
@@ -965,6 +1076,10 @@ class MultiHorizonScorer:
             if factor in components:
                 total += components[factor] * weight
 
+        # Mild amplifier for long-term (fundamentals are already divergent)
+        total = 50 + (total - 50) * 1.15
+        total = max(5, min(95, total))
+
         # Calcular confianza
         available = sum(1 for f in weights.keys() if f in components and components[f] != 50)
         confidence = (available / len(weights)) * 100
@@ -974,7 +1089,7 @@ class MultiHorizonScorer:
         return HorizonScore(
             horizon=Horizon.LONG_TERM,
             total_score=round(total, 1),
-            signal=self._get_signal(total),
+            signal=self._get_signal(total, 'long_term'),
             components=components,
             explanation=explanation,
             confidence=round(confidence, 1)

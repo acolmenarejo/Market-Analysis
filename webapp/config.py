@@ -54,71 +54,95 @@ TICKER_UNIVERSE_BY_REGION = {
         'AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN', 'NVDA', 'TSLA', 'NFLX',
         # Semiconductores
         'AVGO', 'AMD', 'INTC', 'QCOM', 'MU', 'TSM', 'AMAT', 'LRCX', 'MRVL', 'ARM', 'SMCI',
+        'ON', 'KLAC', 'NXPI', 'TER', 'MPWR', 'SWKS',
         # Software / Cloud
         'CRM', 'ORCL', 'IBM', 'NOW', 'ADBE', 'PLTR', 'SNOW', 'DDOG', 'ZS', 'CRWD',
         'PANW', 'NET', 'TTD', 'HUBS', 'WDAY', 'TEAM', 'ZM', 'DOCU',
+        'FTNT', 'MNDY', 'MDB', 'BILL', 'CELH', 'IONQ', 'SOUN',
         # Fintech
-        'V', 'MA', 'PYPL', 'XYZ', 'COIN', 'HOOD', 'SOFI', 'AFRM', 'UPST',
+        'V', 'MA', 'PYPL', 'XYZ', 'COIN', 'HOOD', 'SOFI', 'AFRM', 'UPST', 'FISV', 'GPN',
         # Banks
-        'JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'SCHW', 'BLK',
+        'JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'SCHW', 'BLK', 'USB', 'PNC', 'TFC', 'AXP',
         # Healthcare / Biotech
         'UNH', 'JNJ', 'PFE', 'MRK', 'ABBV', 'LLY', 'GILD', 'BMY', 'AMGN', 'REGN', 'MRNA', 'VRTX',
+        'ISRG', 'DXCM', 'ILMN', 'BIIB', 'ZTS', 'CI', 'HUM', 'ELV', 'TMO', 'ABT', 'SYK', 'MDT',
         # Consumer
         'PG', 'KO', 'PEP', 'WMT', 'COST', 'HD', 'MCD', 'NKE', 'SBUX', 'TGT', 'LOW',
+        'LULU', 'DECK', 'EL', 'CL', 'GIS', 'KHC', 'MNST', 'STZ',
         # Energy
-        'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'OXY',
+        'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'OXY', 'PSX', 'MPC', 'VLO', 'DVN', 'FANG',
         # Defense / Aerospace
-        'LMT', 'RTX', 'NOC', 'GD', 'BA', 'HII',
+        'LMT', 'RTX', 'NOC', 'GD', 'BA', 'HII', 'LHX', 'TDG',
         # Industrials
-        'CAT', 'DE', 'UNP', 'UPS', 'FDX', 'HON',
+        'CAT', 'DE', 'UNP', 'UPS', 'FDX', 'HON', 'GE', 'MMM', 'EMR', 'ETN', 'ITW', 'PH',
         # Telecom / Media
-        'VZ', 'T', 'TMUS', 'DIS', 'CMCSA', 'CHTR',
+        'VZ', 'T', 'TMUS', 'DIS', 'CMCSA', 'CHTR', 'WBD', 'FOX',
         # REITs / Utilities
-        'AMT', 'PLD', 'NEE', 'DUK', 'SO',
+        'AMT', 'PLD', 'NEE', 'DUK', 'SO', 'SPG', 'O', 'EQIX', 'PSA', 'CCI', 'D', 'AEP', 'SRE',
         # Growth / High-volume
         'UBER', 'ABNB', 'SHOP', 'SPOT', 'RBLX', 'SNAP', 'PINS', 'ROKU',
-        'RIVN', 'LCID', 'MELI', 'SE', 'GRAB',
+        'RIVN', 'LCID', 'MELI', 'SE', 'GRAB', 'DASH', 'LYFT', 'CPNG',
+        # Materials / Mining
+        'FCX', 'NEM', 'LIN', 'APD', 'ECL', 'NUE',
+        # Insurance
+        'BRK-B', 'PGR', 'TRV', 'ALL', 'MET',
+        # AI / Robotics
+        'PATH', 'AI', 'RKLB', 'LUNR',
     ],
     'Europe': [
         # UK (.L) — FTSE blue chips
         'SHEL.L', 'AZN.L', 'HSBA.L', 'ULVR.L', 'BP.L', 'GSK.L', 'RIO.L',
         'LSEG.L', 'DGE.L', 'REL.L', 'BARC.L', 'LLOY.L',
+        'VOD.L', 'BT-A.L', 'NG.L', 'SSE.L', 'GLEN.L', 'AAL.L',
         # Germany (.DE) — DAX
         'SAP.DE', 'SIE.DE', 'ALV.DE', 'DTE.DE', 'AIR.DE', 'BAS.DE',
         'MBG.DE', 'BMW.DE', 'MUV2.DE', 'IFX.DE', 'ADS.DE',
+        'RHM.DE', 'HEN3.DE', 'DB1.DE', 'VOW3.DE',
         # France (.PA) — CAC 40
         'MC.PA', 'OR.PA', 'TTE.PA', 'SAN.PA', 'AI.PA', 'SU.PA',
-        'BN.PA', 'CS.PA', 'KER.PA', 'EL.PA',
+        'BN.PA', 'CS.PA', 'KER.PA', 'EL.PA', 'SGO.PA', 'CAP.PA',
         # Spain (.MC)
-        'ITX.MC', 'SAN.MC', 'IBE.MC', 'TEF.MC', 'BBVA.MC',
+        'ITX.MC', 'SAN.MC', 'IBE.MC', 'TEF.MC', 'BBVA.MC', 'FER.MC', 'AMS.MC',
         # Netherlands (.AS)
-        'ASML.AS', 'PHIA.AS', 'UNA.AS', 'INGA.AS',
+        'ASML.AS', 'PHIA.AS', 'UNA.AS', 'INGA.AS', 'AD.AS', 'WKL.AS',
         # Switzerland (.SW)
-        'NESN.SW', 'ROG.SW', 'NOVN.SW', 'UBSG.SW',
+        'NESN.SW', 'ROG.SW', 'NOVN.SW', 'UBSG.SW', 'ABBN.SW', 'SREN.SW',
         # Italy (.MI)
-        'ENI.MI', 'ISP.MI', 'UCG.MI',
+        'ENI.MI', 'ISP.MI', 'UCG.MI', 'ENEL.MI', 'RACE.MI',
+        # Nordic
+        'NOVO-B.CO', 'ERIC-B.ST', 'VOLV-B.ST', 'SAND.ST', 'NESTE.HE',
     ],
     'Asia': [
         # Japan (.T)
         '7203.T', '6758.T', '6861.T', '8306.T', '9984.T', '6902.T', '7267.T', '4063.T',
+        '6501.T', '7974.T', '8035.T', '9983.T',
         # Hong Kong (.HK)
         '0700.HK', '9988.HK', '1299.HK', '0005.HK', '3690.HK', '9999.HK', '2318.HK',
+        '0941.HK', '1810.HK', '2020.HK',
         # China (.SS)
-        '600519.SS', '601318.SS', '600036.SS',
+        '600519.SS', '601318.SS', '600036.SS', '601012.SS',
         # Korea (.KS)
-        '005930.KS', '000660.KS', '035420.KS',
+        '005930.KS', '000660.KS', '035420.KS', '373220.KS',
         # India (.NS)
         'RELIANCE.NS', 'TCS.NS', 'INFY.NS', 'HDFCBANK.NS', 'ICICIBANK.NS',
+        'BHARTIARTL.NS', 'ITC.NS', 'SBIN.NS', 'LT.NS', 'WIPRO.NS',
         # Australia (.AX)
-        'BHP.AX', 'CBA.AX', 'CSL.AX', 'WDS.AX',
+        'BHP.AX', 'CBA.AX', 'CSL.AX', 'WDS.AX', 'NAB.AX', 'WBC.AX', 'FMG.AX',
+        # Taiwan (.TW)
+        '2330.TW', '2454.TW',
+        # Singapore (.SI)
+        'D05.SI', 'O39.SI', 'U11.SI',
     ],
     'LatAm': [
         # Brazil (.SA)
         'VALE3.SA', 'PETR4.SA', 'ITUB4.SA', 'BBDC4.SA', 'ABEV3.SA', 'WEGE3.SA',
+        'B3SA3.SA', 'RENT3.SA', 'SUZB3.SA', 'GGBR4.SA',
         # Mexico (.MX)
-        'AMXL.MX', 'FEMSAUBD.MX', 'WALMEX.MX',
+        'FEMSAUBD.MX', 'WALMEX.MX', 'GFNORTEO.MX', 'CEMEXCPO.MX',
         # Argentina (US-listed ADRs)
         'YPF', 'GGAL', 'MELI',
+        # Chile / Colombia (US-listed)
+        'SQM', 'BSAC', 'CIB', 'EC',
     ],
 }
 

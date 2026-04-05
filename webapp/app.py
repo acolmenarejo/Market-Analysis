@@ -1329,88 +1329,113 @@ SECTOR_MAP = {
     ],
     'Semiconductors': [
         'AVGO', 'AMD', 'INTC', 'QCOM', 'MU', 'TSM', 'AMAT', 'LRCX', 'MRVL', 'ARM', 'SMCI',
+        'ON', 'KLAC', 'NXPI', 'TER', 'MPWR', 'SWKS',
         # International
-        'ASML.AS', 'IFX.DE', '6861.T', '005930.KS', '000660.KS',
+        'ASML.AS', 'IFX.DE', '6861.T', '005930.KS', '000660.KS', '8035.T',
+        '2330.TW', '2454.TW', '373220.KS',
     ],
     'Software/Cloud': [
         'CRM', 'ORCL', 'IBM', 'NOW', 'ADBE', 'PLTR', 'SNOW', 'DDOG', 'ZS', 'CRWD',
         'PANW', 'NET', 'TTD', 'HUBS', 'WDAY', 'TEAM', 'ZM', 'DOCU',
+        'FTNT', 'MNDY', 'MDB', 'BILL', 'PATH', 'AI', 'IONQ', 'SOUN',
         # International
-        'TCS.NS', 'INFY.NS', '035420.KS',
+        'TCS.NS', 'INFY.NS', '035420.KS', 'WIPRO.NS',
     ],
     'Banks/Finance': [
-        'JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'SCHW', 'BLK',
-        'V', 'MA', 'PYPL', 'XYZ', 'COIN', 'HOOD', 'SOFI', 'AFRM', 'UPST',
+        'JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'SCHW', 'BLK', 'USB', 'PNC', 'TFC', 'AXP',
+        'V', 'MA', 'PYPL', 'XYZ', 'COIN', 'HOOD', 'SOFI', 'AFRM', 'UPST', 'FISV', 'GPN',
+        'BRK-B', 'PGR', 'TRV', 'ALL', 'MET',
         # International
         'HSBA.L', 'BARC.L', 'LLOY.L', 'LSEG.L',
         'BBVA.MC', 'SAN.MC',
-        'ALV.DE', 'MUV2.DE',
+        'ALV.DE', 'MUV2.DE', 'DB1.DE',
         '8306.T', '1299.HK', '0005.HK', '2318.HK',
-        'HDFCBANK.NS', 'ICICIBANK.NS',
-        'ITUB4.SA', 'BBDC4.SA',
-        'GGAL',
+        'HDFCBANK.NS', 'ICICIBANK.NS', 'SBIN.NS',
+        'ITUB4.SA', 'BBDC4.SA', 'B3SA3.SA',
+        'GGAL', 'GFNORTEO.MX',
         'INGA.AS',
         'ISP.MI', 'UCG.MI',
         'SAN.PA',
-        'UBSG.SW',
+        'UBSG.SW', 'SREN.SW',
         '601318.SS', '600036.SS',
-        'CBA.AX',
+        'CBA.AX', 'NAB.AX', 'WBC.AX',
+        'D05.SI', 'O39.SI', 'U11.SI',
+        'BSAC', 'CIB',
     ],
     'Healthcare': [
         'UNH', 'JNJ', 'PFE', 'MRK', 'ABBV', 'LLY', 'GILD', 'BMY', 'AMGN', 'REGN', 'MRNA', 'VRTX',
+        'ISRG', 'DXCM', 'ILMN', 'BIIB', 'ZTS', 'CI', 'HUM', 'ELV', 'TMO', 'ABT', 'SYK', 'MDT',
         # International
         'AZN.L', 'GSK.L',
         'ROG.SW', 'NOVN.SW',
         'CSL.AX',
         '4063.T',
+        'NOVO-B.CO',
     ],
     'Consumer': [
         'PG', 'KO', 'PEP', 'WMT', 'COST', 'HD', 'MCD', 'NKE', 'SBUX', 'TGT', 'LOW',
+        'LULU', 'DECK', 'EL', 'CL', 'GIS', 'KHC', 'MNST', 'STZ', 'CELH',
         'UBER', 'ABNB', 'SHOP', 'SPOT', 'RBLX', 'SNAP', 'PINS', 'ROKU',
+        'DASH', 'LYFT', 'CPNG',
         # International
         'ULVR.L', 'DGE.L',
         'NESN.SW',
         'MC.PA', 'OR.PA', 'KER.PA', 'EL.PA', 'BN.PA',
         'ITX.MC',
-        'ADS.DE',
+        'ADS.DE', 'HEN3.DE',
         'MELI', 'SE', 'GRAB',
         'ABEV3.SA', 'WALMEX.MX', 'FEMSAUBD.MX',
-        'UNA.AS', 'PHIA.AS',
-        '9999.HK',
+        'UNA.AS', 'PHIA.AS', 'AD.AS',
+        '9999.HK', '1810.HK',
         '600519.SS',
+        '9983.T',
+        'RACE.MI',
     ],
-    'Energy': [
-        'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'OXY',
+    'Energy/Materials': [
+        'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'OXY', 'PSX', 'MPC', 'VLO', 'DVN', 'FANG',
+        'FCX', 'NEM', 'LIN', 'APD', 'ECL', 'NUE',
         # International
-        'SHEL.L', 'BP.L', 'RIO.L',
+        'SHEL.L', 'BP.L', 'RIO.L', 'GLEN.L', 'AAL.L',
         'TTE.PA',
         'ENI.MI',
-        'PETR4.SA', 'VALE3.SA', 'YPF',
-        'BHP.AX', 'WDS.AX',
+        'PETR4.SA', 'VALE3.SA', 'YPF', 'SUZB3.SA', 'GGBR4.SA',
+        'BHP.AX', 'WDS.AX', 'FMG.AX',
         'BAS.DE',
         'RELIANCE.NS',
+        'SQM', 'EC',
+        'NESTE.HE',
+        'CEMEXCPO.MX',
     ],
     'Industrials/Defense': [
-        'LMT', 'RTX', 'NOC', 'GD', 'BA', 'HII',
-        'CAT', 'DE', 'UNP', 'UPS', 'FDX', 'HON',
+        'LMT', 'RTX', 'NOC', 'GD', 'BA', 'HII', 'LHX', 'TDG',
+        'CAT', 'DE', 'UNP', 'UPS', 'FDX', 'HON', 'GE', 'MMM', 'EMR', 'ETN', 'ITW', 'PH',
+        'RKLB', 'LUNR',
         # International
-        'SIE.DE', 'AIR.DE', 'MBG.DE', 'BMW.DE',
-        '7203.T', '6902.T', '7267.T',
-        'WEGE3.SA',
+        'SIE.DE', 'AIR.DE', 'MBG.DE', 'BMW.DE', 'RHM.DE', 'VOW3.DE',
+        '7203.T', '6902.T', '7267.T', '6501.T',
+        'WEGE3.SA', 'RENT3.SA',
         'RIVN', 'LCID',
-        'SU.PA', 'AI.PA', 'CS.PA',
-        'IBE.MC',
+        'SU.PA', 'AI.PA', 'CS.PA', 'SGO.PA', 'CAP.PA',
+        'IBE.MC', 'FER.MC',
+        'BHARTIARTL.NS', 'LT.NS',
+        'SAND.ST', 'VOLV-B.ST',
     ],
     'Telecom/Media': [
-        'VZ', 'T', 'TMUS', 'DIS', 'CMCSA', 'CHTR',
+        'VZ', 'T', 'TMUS', 'DIS', 'CMCSA', 'CHTR', 'WBD', 'FOX',
         # International
         'DTE.DE', 'TEF.MC',
-        'REL.L',
-        '6758.T',
-        'AMXL.MX',
+        'REL.L', 'VOD.L', 'BT-A.L',
+        '6758.T', '7974.T',
+        'ERIC-B.ST',
+        '0941.HK', '2020.HK',
+        'ITC.NS',
     ],
     'REITs/Utilities': [
-        'AMT', 'PLD', 'NEE', 'DUK', 'SO',
+        'AMT', 'PLD', 'NEE', 'DUK', 'SO', 'SPG', 'O', 'EQIX', 'PSA', 'CCI', 'D', 'AEP', 'SRE',
+        # International
+        'NG.L', 'SSE.L',
+        'ENEL.MI',
+        'AMS.MC',
     ],
 }
 
@@ -3105,20 +3130,20 @@ def show_stock_analysis():
     with col_h2:
         st.markdown(f"""
         <div style="background:#161b22; padding:12px; border-radius:10px; height:100%;">
-            <div style="font-size:0.75rem; color:#888; margin-bottom:8px;">SCORES MULTI-HORIZONTE</div>
+            <div style="font-size:0.75rem; color:#9CA3AF; margin-bottom:8px;">SCORES MULTI-HORIZONTE</div>
             <div style="display:flex; gap:10px;">
                 <div style="flex:1; text-align:center; background:#16213e; padding:8px; border-radius:8px;">
-                    <div style="font-size:0.65rem; color:#888;">Corto</div>
+                    <div style="font-size:0.75rem; color:#9CA3AF;">Corto</div>
                     <div style="font-size:1.4rem; font-weight:bold; color:{score_color(score_cp)};">{score_cp:.0f}</div>
                     <div>{render_signal_badge(signal_cp)}</div>
                 </div>
                 <div style="flex:1; text-align:center; background:#16213e; padding:8px; border-radius:8px;">
-                    <div style="font-size:0.65rem; color:#888;">Medio</div>
+                    <div style="font-size:0.75rem; color:#9CA3AF;">Medio</div>
                     <div style="font-size:1.4rem; font-weight:bold; color:{score_color(score_mp)};">{score_mp:.0f}</div>
                     <div>{render_signal_badge(signal_mp)}</div>
                 </div>
                 <div style="flex:1; text-align:center; background:#16213e; padding:8px; border-radius:8px;">
-                    <div style="font-size:0.65rem; color:#888;">Largo</div>
+                    <div style="font-size:0.75rem; color:#9CA3AF;">Largo</div>
                     <div style="font-size:1.4rem; font-weight:bold; color:{score_color(score_lp)};">{score_lp:.0f}</div>
                     <div>{render_signal_badge(signal_lp)}</div>
                 </div>
@@ -3584,8 +3609,8 @@ def _show_options_tab(ticker: str, data: dict):
     atm_range = (price * 0.95, price * 1.05)
     atm_calls = calls[(calls['strike'] >= atm_range[0]) & (calls['strike'] <= atm_range[1])]
     atm_puts = puts[(puts['strike'] >= atm_range[0]) & (puts['strike'] <= atm_range[1])]
-    atm_call_iv = float(atm_calls['impliedVolatility'].mean() * 100) if not atm_calls.empty else 0
-    atm_put_iv = float(atm_puts['impliedVolatility'].mean() * 100) if not atm_puts.empty else 0
+    atm_call_iv = float(atm_calls['impliedVolatility'].dropna().mean() * 100) if not atm_calls.empty and atm_calls['impliedVolatility'].notna().any() else 0
+    atm_put_iv = float(atm_puts['impliedVolatility'].dropna().mean() * 100) if not atm_puts.empty and atm_puts['impliedVolatility'].notna().any() else 0
     avg_iv = (atm_call_iv + atm_put_iv) / 2 if atm_call_iv > 0 and atm_put_iv > 0 else max(atm_call_iv, atm_put_iv)
 
     total_call_vol = int(calls['volume'].sum())
@@ -3608,8 +3633,8 @@ def _show_options_tab(ticker: str, data: dict):
     # Skew
     otm_puts = puts[puts['strike'] < price * 0.95]
     otm_calls = calls[calls['strike'] > price * 1.05]
-    put_iv_avg = float(otm_puts['impliedVolatility'].mean() * 100) if not otm_puts.empty else 0
-    call_iv_avg = float(otm_calls['impliedVolatility'].mean() * 100) if not otm_calls.empty else 0
+    put_iv_avg = float(otm_puts['impliedVolatility'].dropna().mean() * 100) if not otm_puts.empty and otm_puts['impliedVolatility'].notna().any() else 0
+    call_iv_avg = float(otm_calls['impliedVolatility'].dropna().mean() * 100) if not otm_calls.empty and otm_calls['impliedVolatility'].notna().any() else 0
     skew = put_iv_avg - call_iv_avg
 
     # Metric cards
@@ -3617,32 +3642,58 @@ def _show_options_tab(ticker: str, data: dict):
     pc_color = '#f85149' if pc_ratio_oi > 1.2 else ('#3fb950' if pc_ratio_oi < 0.7 else '#d29922')
     skew_color = '#f85149' if skew > 15 else ('#d29922' if skew > 5 else '#3fb950')
 
-    def _opt_card(label, value, color, sublabel=""):
-        return f'''<div style="background:#161b22; padding:10px; border-radius:8px; text-align:center; border-top:2px solid {color};">
-            <div style="font-size:0.65rem; color:#6e7681; text-transform:uppercase;">{label}</div>
+    def _opt_card(label, value, color, sublabel="", tooltip=""):
+        tip_attr = f' title="{tooltip}"' if tooltip else ''
+        cursor = 'cursor:help;' if tooltip else ''
+        return f'''<div style="background:#161b22; padding:10px; border-radius:8px; text-align:center; border-top:2px solid {color}; {cursor}"{tip_attr}>
+            <div style="font-size:0.75rem; color:#9CA3AF; text-transform:uppercase;">{label}</div>
             <div style="font-size:1.3rem; font-weight:700; color:{color};">{value}</div>
-            <div style="font-size:0.65rem; color:#8b949e;">{sublabel}</div>
+            <div style="font-size:0.75rem; color:#9CA3AF;">{sublabel}</div>
         </div>'''
 
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        st.markdown(_opt_card("ATM IV", f"{avg_iv:.0f}%", iv_color, f"Call: {atm_call_iv:.0f}% | Put: {atm_put_iv:.0f}%"), unsafe_allow_html=True)
+        st.markdown(_opt_card("ATM IV", f"{avg_iv:.0f}%", iv_color,
+            f"Call: {atm_call_iv:.0f}% | Put: {atm_put_iv:.0f}%",
+            "Implied Volatility ATM: Media de IV de calls y puts con strikes cercanos al precio actual (±5%). "
+            "Refleja la expectativa del mercado de volatilidad futura. >40% = alta, <20% = baja."), unsafe_allow_html=True)
     with c2:
-        st.markdown(_opt_card("Expected Move", f"±{expected_move_pct:.1f}%", '#58a6ff', f"Straddle: &#36;{straddle_price:.2f}"), unsafe_allow_html=True)
+        st.markdown(_opt_card("Expected Move", f"±{expected_move_pct:.1f}%", '#58a6ff',
+            f"Straddle: &#36;{straddle_price:.2f}",
+            "Expected Move = precio del straddle ATM / precio spot. "
+            "Se calcula sumando la prima del call ATM + put ATM. "
+            "Representa el rango de precio que el mercado espera con ~68% de probabilidad (1 desviacion estandar) "
+            "para esta expiracion. Si EM > rango de gamma walls, hay riesgo de breakout."), unsafe_allow_html=True)
     with c3:
         pc_label = "BEARISH" if pc_ratio_oi > 1.0 else "BULLISH"
-        st.markdown(_opt_card("Put/Call OI", f"{pc_ratio_oi:.2f}", pc_color, f"{pc_label} | Vol: {pc_ratio_vol:.2f}"), unsafe_allow_html=True)
+        st.markdown(_opt_card("Put/Call OI", f"{pc_ratio_oi:.2f}", pc_color,
+            f"{pc_label} | Vol: {pc_ratio_vol:.2f}",
+            "Put/Call Ratio por Open Interest: Puts totales / Calls totales. "
+            ">1.0 = mas proteccion put (miedo). <0.7 = mas especulacion call (confianza). "
+            "Extremos pueden ser contrarian: mucho miedo = posible suelo."), unsafe_allow_html=True)
     with c4:
         skew_label = "FEAR" if skew > 10 else ("NEUTRAL" if skew > 0 else "GREED")
-        st.markdown(_opt_card("Skew", f"{skew:+.1f}pp", skew_color, f"Put-Call IV gap ({skew_label})"), unsafe_allow_html=True)
+        st.markdown(_opt_card("Skew", f"{skew:+.1f}pp", skew_color,
+            f"Put-Call IV gap ({skew_label})",
+            "Skew = IV media de puts OTM (5%+ fuera) - IV media de calls OTM (5%+ fuera). "
+            "Positivo = puts mas caras que calls (demanda de proteccion, FEAR). "
+            "Negativo = calls mas caras (especulacion alcista, GREED). ±5pp = normal."), unsafe_allow_html=True)
     with c5:
-        st.markdown(_opt_card("Total OI", f"{total_oi:,}", '#58a6ff', f"Calls: {total_call_oi:,} | Puts: {total_put_oi:,}"), unsafe_allow_html=True)
+        st.markdown(_opt_card("Total OI", f"{total_oi:,}", '#58a6ff',
+            f"Calls: {total_call_oi:,} | Puts: {total_put_oi:,}",
+            "Open Interest total: Contratos abiertos en calls + puts para esta expiracion. "
+            "Mayor OI = mas liquidez y niveles de gamma mas fiables."), unsafe_allow_html=True)
 
     # =====================================================================
     # ADVANCED SKEW ANALYSIS - 25-Delta Risk Reversal
     # =====================================================================
     st.markdown("---")
-    st.markdown("### 📊 Advanced SKEW Analysis (25Δ Risk Reversal)")
+    st.markdown("""### 📊 Advanced SKEW Analysis (25Δ Risk Reversal)
+<div style="color:#9CA3AF; font-size:0.8rem; margin:-8px 0 8px 0;">
+<b>25-Delta Risk Reversal</b> = IV del put 25Δ - IV del call 25Δ. Mide la diferencia de demanda entre proteccion bajista (puts)
+y especulacion alcista (calls). Se usa el delta de 25 porque son las opciones OTM mas liquidas.
+<b>Positivo</b> = puts mas caras (miedo/cobertura). <b>Negativo</b> = calls mas caras (especulacion alcista).
+El percentil compara el valor actual vs historico del ticker para detectar extremos.</div>""", unsafe_allow_html=True)
 
     try:
         from webapp.data.providers import (
@@ -3763,6 +3814,93 @@ def _show_options_tab(ticker: str, data: dict):
         st.warning(f"⚠️ Could not calculate advanced SKEW: {str(e)}")
 
     # =====================================================================
+    # IV TERM STRUCTURE — ATM IV across expirations
+    # =====================================================================
+    st.markdown("---")
+    st.markdown("### IV Term Structure")
+
+    try:
+        iv_term_data = []
+        exps_for_ts = expirations[:6]  # Limit to 6 nearest
+        for exp_ts in exps_for_ts:
+            try:
+                if exp_ts == selected_exp:
+                    c_ts, p_ts = calls, puts
+                else:
+                    ch_ts = stock.option_chain(exp_ts)
+                    c_ts = ch_ts.calls
+                    p_ts = ch_ts.puts
+                # ATM IV for this expiration
+                atm_c = c_ts[(c_ts['strike'] >= price * 0.97) & (c_ts['strike'] <= price * 1.03)]
+                atm_p = p_ts[(p_ts['strike'] >= price * 0.97) & (p_ts['strike'] <= price * 1.03)]
+                c_iv = float(atm_c['impliedVolatility'].mean() * 100) if not atm_c.empty else 0
+                p_iv = float(atm_p['impliedVolatility'].mean() * 100) if not atm_p.empty else 0
+                atm_iv_ts = (c_iv + p_iv) / 2 if c_iv > 0 and p_iv > 0 else max(c_iv, p_iv)
+                exp_date_ts = datetime.strptime(exp_ts, '%Y-%m-%d')
+                dte_ts = max((exp_date_ts - datetime.now()).days, 1)
+                if atm_iv_ts > 0:
+                    iv_term_data.append({'exp': exp_ts, 'dte': dte_ts, 'iv': atm_iv_ts})
+            except Exception:
+                continue
+
+        if len(iv_term_data) >= 2:
+            iv_df = pd.DataFrame(iv_term_data)
+            min_iv_row = iv_df.loc[iv_df['iv'].idxmin()]
+            max_iv_row = iv_df.loc[iv_df['iv'].idxmax()]
+
+            fig_ts = go.Figure()
+            fig_ts.add_trace(go.Scatter(
+                x=iv_df['exp'], y=iv_df['iv'],
+                mode='lines+markers', name='ATM IV',
+                line=dict(color='#58a6ff', width=2.5),
+                marker=dict(size=8),
+                hovertemplate='%{x}<br>IV: %{y:.1f}%<extra></extra>'
+            ))
+            # Highlight min and max
+            fig_ts.add_trace(go.Scatter(
+                x=[min_iv_row['exp']], y=[min_iv_row['iv']],
+                mode='markers+text', name='Cheapest',
+                marker=dict(size=14, color='#3fb950', symbol='diamond'),
+                text=[f"{min_iv_row['iv']:.1f}%"], textposition='top center',
+                textfont=dict(color='#3fb950', size=11),
+                hovertemplate=f"Cheapest: {min_iv_row['exp']}<br>IV: {min_iv_row['iv']:.1f}%<extra></extra>"
+            ))
+            fig_ts.add_trace(go.Scatter(
+                x=[max_iv_row['exp']], y=[max_iv_row['iv']],
+                mode='markers+text', name='Most Expensive',
+                marker=dict(size=14, color='#f85149', symbol='diamond'),
+                text=[f"{max_iv_row['iv']:.1f}%"], textposition='top center',
+                textfont=dict(color='#f85149', size=11),
+                hovertemplate=f"Most Expensive: {max_iv_row['exp']}<br>IV: {max_iv_row['iv']:.1f}%<extra></extra>"
+            ))
+            fig_ts.update_layout(
+                height=280, margin=dict(l=10, r=10, t=10, b=30),
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(13,17,23,0.5)',
+                font={'color': '#e6edf3', 'size': 11},
+                xaxis=dict(gridcolor='#21262d', title=None),
+                yaxis=dict(gridcolor='#21262d', title='ATM IV (%)', ticksuffix='%'),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_ts, use_container_width=True, config={'displayModeBar': False},
+                            key=f"iv_term_{ticker}")
+
+            # Summary line
+            structure = 'Contango' if iv_df.iloc[-1]['iv'] > iv_df.iloc[0]['iv'] else 'Backwardation'
+            struct_color = '#d29922' if structure == 'Contango' else '#bc8cff'
+            st.markdown(f"""<div style="background:#161b22; padding:8px 14px; border-radius:6px;">
+                <span style="color:#9CA3AF; font-size:0.8rem;">Estructura: </span>
+                <span style="color:{struct_color}; font-weight:700; font-size:0.85rem;">{structure}</span>
+                <span style="color:#9CA3AF; font-size:0.8rem;"> | Mas barata: </span>
+                <span style="color:#3fb950; font-size:0.85rem;">{min_iv_row['exp']} ({min_iv_row['iv']:.1f}%)</span>
+                <span style="color:#9CA3AF; font-size:0.8rem;"> | Mas cara: </span>
+                <span style="color:#f85149; font-size:0.85rem;">{max_iv_row['exp']} ({max_iv_row['iv']:.1f}%)</span>
+            </div>""", unsafe_allow_html=True)
+        else:
+            st.info("Datos insuficientes para IV Term Structure (se necesitan al menos 2 expirations)")
+    except Exception as e:
+        st.warning(f"No se pudo calcular IV Term Structure: {e}")
+
+    # =====================================================================
     # STRATEGY RECOMMENDER
     # =====================================================================
     st.markdown("---")
@@ -3812,6 +3950,9 @@ def _show_options_tab(ticker: str, data: dict):
             badges += f'<span style="background:rgba(188,140,255,0.15); color:#bc8cff; padding:4px 10px; border-radius:4px; font-size:0.7rem; font-weight:600;">R/R: {_esc(str(rr_text))}</span>'
         if em_text:
             badges += f'<span style="background:rgba(210,153,34,0.15); color:#d29922; padding:4px 10px; border-radius:4px; font-size:0.7rem; font-weight:600;">{em_text}</span>'
+        pop_text = strategy.get('pop', '')
+        if pop_text:
+            badges += f'<span style="background:rgba(63,185,80,0.15); color:#3fb950; padding:4px 10px; border-radius:4px; font-size:0.7rem; font-weight:600;">POP: {pop_text}</span>'
         liq = strategy.get('liquidity', 0)
         if liq > 0:
             liq_color = '#3fb950' if liq > 70 else ('#d29922' if liq > 40 else '#f85149')
@@ -3853,14 +3994,36 @@ def _show_options_tab(ticker: str, data: dict):
 
         st.markdown(f'<div style="background:#161b22; border:1px solid #21262d; border-radius:8px; padding:14px; margin:8px 0;"><div style="font-size:0.75rem; color:#e6edf3; font-weight:600; margin-bottom:8px;">Strikes &amp; Risk/Reward</div>{strikes_html}{pl_html}</div>', unsafe_allow_html=True)
 
-        # GEX context + Greeks as two columns
-        col_gex, col_greeks = st.columns(2)
+        # GEX context + Greeks + Position Greeks as three columns
+        col_gex, col_greeks, col_pos = st.columns(3)
         with col_gex:
             gex_note = strategy.get('gex_note', '')
             if gex_note:
                 st.markdown(f'<div style="padding:10px; background:rgba(210,153,34,0.1); border-left:3px solid #d29922; border-radius:4px; height:100%;"><div style="font-size:0.7rem; color:#d29922; font-weight:600;">GEX Context</div><div style="font-size:0.75rem; color:#e6edf3; margin-top:4px;">{gex_note}</div></div>', unsafe_allow_html=True)
         with col_greeks:
             st.markdown(f'<div style="padding:10px; background:rgba(188,140,255,0.1); border-left:3px solid #bc8cff; border-radius:4px; height:100%;"><div style="font-size:0.7rem; color:#bc8cff; font-weight:600;">Greeks Impact</div><div style="font-size:0.75rem; color:#e6edf3; margin-top:4px;">{strategy["greeks_impact"]}</div></div>', unsafe_allow_html=True)
+        with col_pos:
+            # Position-level Greeks: Delta, Vanna, Charm
+            try:
+                from webapp.data.providers import calculate_position_greeks
+                T_pos = max(dte / 365.0, 1/365) if dte > 0 else 30/365
+                pos_greeks = calculate_position_greeks(strategy, price, T_pos)
+                nd = pos_greeks['net_delta']
+                nv = pos_greeks['net_vanna']
+                nc = pos_greeks['net_charm']
+                delta_color = '#3fb950' if nd > 0.05 else '#f85149' if nd < -0.05 else '#d29922'
+                vanna_note = 'IV rise helps' if (nd > 0 and nv > 0) or (nd < 0 and nv < 0) else 'IV rise hurts' if nv != 0 else 'Neutral'
+                charm_note = 'Delta grows' if nc > 0 else 'Delta decays' if nc < 0 else 'Stable'
+                st.markdown(f"""<div style="padding:10px; background:rgba(88,166,255,0.1); border-left:3px solid #58a6ff; border-radius:4px; height:100%;">
+                    <div style="font-size:0.7rem; color:#58a6ff; font-weight:600;">Position Greeks</div>
+                    <div style="font-size:0.75rem; color:#e6edf3; margin-top:4px;">
+                        <b style="color:{delta_color};">&#916; {nd:+.2f}</b> net delta<br>
+                        <b>Vanna:</b> {nv:+.3f} <span style="color:#9CA3AF;">({vanna_note})</span><br>
+                        <b>Charm:</b> {nc:+.3f}/day <span style="color:#9CA3AF;">({charm_note})</span>
+                    </div>
+                </div>""", unsafe_allow_html=True)
+            except Exception:
+                st.markdown('<div style="padding:10px; background:rgba(88,166,255,0.1); border-left:3px solid #58a6ff; border-radius:4px;"><div style="font-size:0.7rem; color:#58a6ff; font-weight:600;">Position Greeks</div><div style="font-size:0.75rem; color:#9CA3AF; margin-top:4px;">Insufficient data</div></div>', unsafe_allow_html=True)
 
         # Unusual activity alert
         unusual = strategy.get('unusual_activity', [])
@@ -3882,6 +4045,31 @@ def _show_options_tab(ticker: str, data: dict):
         reasons_html = ' | '.join(reasons) if reasons else 'No signals'
         ctx = strategy['context']
         st.markdown(f'<div style="padding:8px 12px; border-top:1px solid #21262d; font-size:0.7rem; color:#6e7681; background:#161b22; border-radius:0 0 12px 12px; margin-bottom:16px;"><strong style="color:{bs_color};">Bias {bs_label} ({bs:+d}):</strong> {reasons_html}<br><strong>Context:</strong> SKEW {ctx["skew"]} | IV {ctx["avg_iv"]} | {ctx["gamma_regime"]} | P/C {ctx["pc_ratio"]} | DTE {ctx["dte"]}d | EM {ctx.get("expected_move","N/A")}</div>', unsafe_allow_html=True)
+
+        # ===== NEXT TRADE SUMMARY =====
+        sname = strategy.get('name', 'N/A')
+        s_pw = rec_put_wall if rec_put_wall > 0 else 0
+        s_cw = rec_call_wall if rec_call_wall > 0 else 0
+        em_ctx = ctx.get('expected_move', 'N/A')
+        summary_lines = []
+        summary_lines.append(f'<b style="color:#58a6ff;">{sname}</b>')
+        if s_pw > 0:
+            summary_lines.append(f'Soporte (Put Wall): <b>&#36;{s_pw:,.0f}</b> ({((s_pw/price - 1)*100):+.1f}%)')
+        if s_cw > 0:
+            summary_lines.append(f'Resistencia (Call Wall): <b>&#36;{s_cw:,.0f}</b> ({((s_cw/price - 1)*100):+.1f}%)')
+        summary_lines.append(f'Expected Move: <b>{em_ctx}</b> | IV: <b>{ctx["avg_iv"]}</b> | DTE: <b>{ctx["dte"]}d</b>')
+        be_val = strategy.get('breakeven', '')
+        if be_val:
+            be_str = f'&#36;{be_val:.2f}' if isinstance(be_val, (int, float)) else str(be_val).replace('$', '&#36;')
+            summary_lines.append(f'Breakeven: <b>{be_str}</b>')
+        pop_val = strategy.get('pop', '')
+        if pop_val:
+            summary_lines.append(f'Prob. of Profit: <b style="color:#3fb950;">{pop_val}</b>')
+        summary_html = ''.join(f'<div style="font-size:0.8rem; color:#e6edf3; padding:2px 0;">{l}</div>' for l in summary_lines)
+        st.markdown(f"""<div style="background:linear-gradient(135deg, rgba(88,166,255,0.08), rgba(63,185,80,0.05)); border:1px solid #58a6ff40; border-radius:8px; padding:12px 16px; margin:10px 0;">
+            <div style="font-size:0.7rem; color:#58a6ff; font-weight:700; margin-bottom:6px; text-transform:uppercase; letter-spacing:1px;">Trade Summary</div>
+            {summary_html}
+        </div>""", unsafe_allow_html=True)
 
     except Exception as e:
         st.warning(f"⚠️ Could not generate strategy: {str(e)}")
@@ -4029,6 +4217,7 @@ def _show_options_tab(ticker: str, data: dict):
     gex_data = []
     call_gex_data = []
     put_gex_data = []
+    per_exp_summary = []  # Per-expiration GEX breakdown
 
     for exp_i in exps_to_use:
         try:
@@ -4048,8 +4237,9 @@ def _show_options_tab(ticker: str, data: dict):
             dte_i = max((exp_date_i - datetime.now()).days, 1)
             dte_weight = 1.0 / (dte_i ** 0.5)
 
-            # Sigma based on IV + DTE for gaussian width
-            avg_iv_dec = max(avg_iv / 100, 0.15)
+            # Sigma based on IV + DTE for gaussian width (guard against NaN avg_iv)
+            _avg_iv_safe = avg_iv if (avg_iv == avg_iv) and avg_iv > 0 else 25.0
+            avg_iv_dec = max(_avg_iv_safe / 100, 0.15)
             sigma_pct = max(avg_iv_dec * (dte_i / 365) ** 0.5, 0.02)
 
             for _, row in c_df.iterrows():
@@ -4070,6 +4260,23 @@ def _show_options_tab(ticker: str, data: dict):
                     gex = -oi * gamma_proxy * 100 * dte_weight
                     gex_data.append({'strike': strike, 'gex': gex})
                     put_gex_data.append({'strike': strike, 'gex': abs(gex)})
+
+            # Collect per-expiration summary
+            exp_call_oi = int(c_df['openInterest'].sum()) if not c_df.empty else 0
+            exp_put_oi = int(p_df['openInterest'].sum()) if not p_df.empty else 0
+            exp_call_strikes = c_df[c_df['strike'] >= price] if not c_df.empty else pd.DataFrame()
+            exp_put_strikes = p_df[p_df['strike'] <= price] if not p_df.empty else pd.DataFrame()
+            exp_cw = float(exp_call_strikes.loc[exp_call_strikes['openInterest'].idxmax(), 'strike']) if not exp_call_strikes.empty and exp_call_strikes['openInterest'].sum() > 0 else price
+            exp_pw = float(exp_put_strikes.loc[exp_put_strikes['openInterest'].idxmax(), 'strike']) if not exp_put_strikes.empty and exp_put_strikes['openInterest'].sum() > 0 else price
+            per_exp_summary.append({
+                'exp': exp_i,
+                'dte': dte_i,
+                'call_wall': exp_cw,
+                'put_wall': exp_pw,
+                'total_oi': exp_call_oi + exp_put_oi,
+                'call_oi': exp_call_oi,
+                'put_oi': exp_put_oi,
+            })
         except Exception:
             continue
 
@@ -4343,6 +4550,45 @@ def _show_options_tab(ticker: str, data: dict):
                                     key=f"gex_exp_{ticker}_{eg['exp']}")
 
         # =====================================================================
+        # PER-EXPIRATION GEX SUMMARY TABLE
+        # =====================================================================
+        if multi_exp and len(per_exp_summary) > 1:
+            total_all_oi = sum(e['total_oi'] for e in per_exp_summary) or 1
+            rows_html = ''
+            for es in per_exp_summary:
+                pct_of_total = (es['total_oi'] / total_all_oi * 100)
+                # Find regime for this exp from exp_gex_charts
+                exp_regime_str = ''
+                for eg in exp_gex_charts:
+                    if eg['exp'] == es['exp']:
+                        exp_regime_str = f'<span style="color:{eg["regime_color"]};">{eg["regime"]}</span>'
+                        break
+                rows_html += f'''<tr style="border-bottom:1px solid #21262d;">
+                    <td style="padding:4px 8px; color:#e6edf3; font-size:0.8rem;">{es['exp']}</td>
+                    <td style="padding:4px 8px; color:#9CA3AF; font-size:0.8rem;">{es['dte']}d</td>
+                    <td style="padding:4px 8px; font-size:0.8rem;">{exp_regime_str}</td>
+                    <td style="padding:4px 8px; color:#f85149; font-size:0.8rem;">&#36;{es['call_wall']:.0f}</td>
+                    <td style="padding:4px 8px; color:#3fb950; font-size:0.8rem;">&#36;{es['put_wall']:.0f}</td>
+                    <td style="padding:4px 8px; color:#9CA3AF; font-size:0.8rem;">{es['total_oi']:,}</td>
+                    <td style="padding:4px 8px; color:#58a6ff; font-size:0.8rem;">{pct_of_total:.0f}%</td>
+                </tr>'''
+            st.markdown(f"""<div style="background:#161b22; border-radius:8px; padding:8px; margin:8px 0;">
+                <div style="font-size:0.8rem; font-weight:700; color:#9CA3AF; margin-bottom:6px;">PER-EXPIRATION BREAKDOWN</div>
+                <table style="width:100%; border-collapse:collapse;">
+                    <tr style="border-bottom:2px solid #30363d;">
+                        <th style="padding:4px 8px; text-align:left; color:#9CA3AF; font-size:0.75rem;">Exp</th>
+                        <th style="padding:4px 8px; text-align:left; color:#9CA3AF; font-size:0.75rem;">DTE</th>
+                        <th style="padding:4px 8px; text-align:left; color:#9CA3AF; font-size:0.75rem;">Regime</th>
+                        <th style="padding:4px 8px; text-align:left; color:#9CA3AF; font-size:0.75rem;">Call Wall</th>
+                        <th style="padding:4px 8px; text-align:left; color:#9CA3AF; font-size:0.75rem;">Put Wall</th>
+                        <th style="padding:4px 8px; text-align:left; color:#9CA3AF; font-size:0.75rem;">OI</th>
+                        <th style="padding:4px 8px; text-align:left; color:#9CA3AF; font-size:0.75rem;">% Total</th>
+                    </tr>
+                    {rows_html}
+                </table>
+            </div>""", unsafe_allow_html=True)
+
+        # =====================================================================
         # DYNAMIC GEX INTERPRETATION — reads the actual chart data
         # =====================================================================
         st.markdown("#### Interpretacion del grafico")
@@ -4376,161 +4622,108 @@ def _show_options_tab(ticker: str, data: dict):
         range_pw_cw = abs(call_wall - put_wall)
         range_pw_cw_pct = (range_pw_cw / price * 100) if price > 0 else 0
 
-        interp = []
-
-        # 1/ CHART LEGEND
-        interp.append(f'<b style="color:#3fb950;">Barras verdes</b> = gamma positiva (dealers frenan el movimiento). <b style="color:#f85149;">Barras rojas</b> = gamma negativa (dealers amplifican el movimiento). <b style="color:#d29922;">Linea amarilla</b> = perfil GEX acumulado. <b style="color:#ffffff;">Linea blanca</b> = precio actual de {ticker}.')
-
-        # 2/ READING THE CHART — what is the shape telling us?
-        if pos_above > neg_above and total_above > 0:
-            pct_pos_above = (pos_above / total_above * 100) if total_above > 0 else 0
-            interp.append(f'<b style="color:#58a6ff;">Lectura del grafico:</b> Por encima del precio, <b>{pct_pos_above:.0f}% de los strikes tienen gamma positiva</b> (barras verdes). Esto forma un "muro" de amortiguacion que <b>frena los rallies</b>. El precio necesita un catalizador fuerte (earnings, news) para romper la zona &#36;{call_wall:.0f}.')
-        elif neg_above > pos_above and total_above > 0:
-            interp.append(f'<b style="color:#58a6ff;">Lectura del grafico:</b> Por encima del precio hay <b>predominancia de gamma negativa</b> (barras rojas). Si el precio sube, los dealers compran para cubrir, <b>acelerando el rally</b>. Un breakout por encima de &#36;{call_wall:.0f} podria generar un movimiento explosivo.')
-        else:
-            interp.append(f'<b style="color:#58a6ff;">Lectura del grafico:</b> La distribucion de gamma alrededor del precio es <b>relativamente equilibrada</b>. No hay sesgo claro por parte de dealers — el precio puede moverse en cualquier direccion sin amplificacion significativa.')
-
-        # 3/ REGIME — what it means practically
-        if total_net_gex > 0:
-            if gex_above_total > 0 and gex_below_total < 0:
-                interp.append(f'<b style="color:#3fb950;">Regimen actual: GAMMA POSITIVA.</b> El precio esta "atrapado" en una zona de amortiguacion. Los dealers mantienen posiciones que les obligan a <b>vender en rallies y comprar en caidas</b>. Esto crea un efecto de <b>"pinning"</b> — el precio tiende a quedarse pegado cerca de los strikes con mas OI. Espera movimiento lateral/contenido mientras se mantenga entre &#36;{put_wall:.0f} y &#36;{call_wall:.0f}.')
-            else:
-                interp.append(f'<b style="color:#3fb950;">Regimen actual: GAMMA POSITIVA.</b> Net GEX positivo. Los dealers actuan como <b>amortiguadores</b> del mercado. El precio tiende a moverse menos de lo que la volatilidad implicita sugiere.')
-        else:
-            if abs(gex_below_total) > abs(gex_above_total) * 1.5:
-                interp.append(f'<b style="color:#f85149;">Regimen actual: GAMMA NEGATIVA (sesgo bajista).</b> Hay mucho mas gamma negativa por debajo del precio que por encima. Si el precio cae, los dealers venden para cubrir, <b>acelerando la caida</b>. Es como una "rampa" hacia abajo — cada tick a la baja genera mas venta. <b>Cuidado con breaks debajo de &#36;{put_wall:.0f}.</b>')
-            elif abs(gex_above_total) > abs(gex_below_total) * 1.5:
-                interp.append(f'<b style="color:#f85149;">Regimen actual: GAMMA NEGATIVA (sesgo alcista).</b> La gamma negativa esta concentrada <b>por encima del precio</b>. Un movimiento al alza podria ser amplificado por dealer hedging. Si rompe &#36;{call_wall:.0f}, espera <b>aceleracion del rally</b>.')
-            else:
-                interp.append(f'<b style="color:#f85149;">Regimen actual: GAMMA NEGATIVA.</b> Los dealers amplifican los movimientos en ambas direcciones. <b>Volatilidad esperada mayor</b> de lo normal. Movimientos bruscos son mas probables.')
-
-        # 4/ KEY LEVELS — what they are and what happens if broken
+        # KEY LEVELS
         pct_to_cw = ((call_wall - price) / price * 100)
         pct_to_pw = ((price - put_wall) / price * 100)
-
-        if pct_to_cw > 0:
-            interp.append(f'<b style="color:#f85149;">Call Resistance &#36;{call_wall:.0f}</b> (+{pct_to_cw:.1f}% arriba): Maxima concentracion de gamma de calls. Actua como <b>techo</b>. Si se rompe, los dealers que vendieron calls deben comprar acciones para cubrir → <b>short gamma squeeze al alza</b>. Si no se rompe, el precio rebota hacia abajo desde esta zona.')
-        else:
-            interp.append(f'<b style="color:#f85149;">Call Resistance &#36;{call_wall:.0f}</b>: El precio YA ESTA por encima del Call Wall. Los dealers estan en <b>modo de persecucion</b> — comprando para cubrir. Si la presion se mantiene, el proximo nivel de resistencia es el siguiente strike con gamma significativa.')
-
-        if pct_to_pw > 0:
-            interp.append(f'<b style="color:#3fb950;">Put Support &#36;{put_wall:.0f}</b> (-{pct_to_pw:.1f}% abajo): Maxima concentracion de gamma de puts. Actua como <b>suelo</b>. Si se rompe, dealers que vendieron puts deben vender acciones para cubrir → <b>gamma avalanche a la baja</b>. Mientras se mantenga, funciona como nivel de soporte.')
-        else:
-            interp.append(f'<b style="color:#3fb950;">Put Support &#36;{put_wall:.0f}</b>: El precio YA ESTA por debajo del Put Wall. Los dealers estan vendiendo para cubrir → <b>presion bajista activa</b>. Buscar estabilizacion en el siguiente cluster de gamma.')
-
-        # 5/ PROFILE LINE — what the yellow line shape tells us
-        if cum_at_spot > cum_max * 0.7 and cum_max > 0:
-            interp.append(f'<b style="color:#d29922;">Perfil GEX (linea amarilla):</b> El perfil acumulado esta cerca de su maximo en el precio actual. Esto indica que <b>la mayor parte del gamma positivo esta por debajo del precio</b>. Hay "colchon" a la baja pero <b>poco soporte gamma al alza</b>.')
-        elif cum_at_spot < cum_min * 0.7 and cum_min < 0:
-            interp.append(f'<b style="color:#d29922;">Perfil GEX (linea amarilla):</b> El perfil acumulado esta en zona baja. La <b>mayor parte del gamma negativo esta por debajo del precio</b>. Si cae, entra en zona de amplificacion. El perfil sugiere <b>mayor riesgo a la baja</b>.')
-        else:
-            interp.append(f'<b style="color:#d29922;">Perfil GEX (linea amarilla):</b> El perfil muestra una transicion de gamma negativa (izquierda) a positiva (derecha) o viceversa. El punto donde la linea cruza cero es el <b>HVL</b> — el nivel donde el regimen de volatilidad cambia.')
-
-        # 6/ MAX PAIN GRAVITY
         mp_dist_pct = ((price - max_pain_strike) / price * 100) if price > 0 else 0
-        if abs(mp_dist_pct) > 3:
-            mp_dir = "por encima" if mp_dist_pct > 0 else "por debajo"
-            interp.append(f'<b style="color:#bc8cff;">Max Pain &#36;{max_pain_strike:.0f}</b>: El precio esta {abs(mp_dist_pct):.1f}% {mp_dir} del punto de maximo dolor para compradores de opciones. A medida que se acerca el vencimiento, hay una "fuerza gravitacional" que atrae el precio hacia Max Pain. Esto es mas relevante en las ultimas 2-3 sesiones antes del vencimiento.')
-        else:
-            interp.append(f'<b style="color:#bc8cff;">Max Pain &#36;{max_pain_strike:.0f}</b>: El precio esta <b>muy cerca de Max Pain</b>. Las opciones vencen con el minimo valor posible para compradores. Esta es una posicion de <b>equilibrio</b> — poca presion de hedging en cualquier direccion.')
 
-        # 7/ EXPECTED MOVE
+        # CONDENSED GEX INTERPRETATION — scannable format
+        interp = []
+
+        # 1/ REGIME (one line)
+        if total_net_gex > 0:
+            regime_color, regime_label = '#3fb950', 'GEX+ PINNING'
+            regime_desc = f'Dealers amortiguan movimientos. Rango esperado: &#36;{put_wall:.0f}—&#36;{call_wall:.0f} ({range_pw_cw_pct:.0f}%)'
+        else:
+            regime_color, regime_label = '#f85149', 'GEX- AMPLIFICACION'
+            if abs(gex_below_total) > abs(gex_above_total) * 1.5:
+                regime_desc = f'Sesgo bajista. Dealers aceleran caidas debajo de &#36;{put_wall:.0f}'
+            elif abs(gex_above_total) > abs(gex_below_total) * 1.5:
+                regime_desc = f'Sesgo alcista. Breakout sobre &#36;{call_wall:.0f} se amplifica'
+            else:
+                regime_desc = 'Amplificacion bidireccional. Mayor volatilidad esperada'
+        interp.append(f'<b style="color:{regime_color};">REGIMEN: {regime_label}</b> — {regime_desc}')
+
+        # 2/ KEY LEVELS (one line)
+        cw_status = f'+{pct_to_cw:.1f}%' if pct_to_cw > 0 else '<b>ROTO</b>'
+        pw_status = f'-{pct_to_pw:.1f}%' if pct_to_pw > 0 else '<b>ROTO</b>'
+        mp_dir = "+" if mp_dist_pct > 0 else ""
+        interp.append(f'<b>NIVELES:</b> Call Wall &#36;{call_wall:.0f} ({cw_status}) | Put Wall &#36;{put_wall:.0f} ({pw_status}) | Max Pain &#36;{max_pain_strike:.0f} ({mp_dir}{mp_dist_pct:.1f}%) | Rango {range_pw_cw_pct:.0f}%')
+
+        # 3/ EXPECTED MOVE vs WALLS (one line — key confluence)
         if expected_move_pct > 0:
             up_t = price * (1 + expected_move_pct / 100)
             dn_t = price * (1 - expected_move_pct / 100)
-            # Is call_wall within expected move?
             cw_within = abs(pct_to_cw) < expected_move_pct
             pw_within = abs(pct_to_pw) < expected_move_pct
-            em_note = ""
+            em_vs_range = 'CONTENIDO' if expected_move_pct < range_pw_cw_pct * 0.6 else ('EXCEDE RANGO' if expected_move_pct > range_pw_cw_pct * 0.8 else 'BORDERLINE')
+            em_color = '#3fb950' if em_vs_range == 'CONTENIDO' else ('#f85149' if em_vs_range == 'EXCEDE RANGO' else '#d29922')
+            walls_note = ''
             if cw_within and pw_within:
-                em_note = " <b>Ambos muros gamma estan dentro del expected move</b> — si el precio se mueve, probablemente testee alguno de ellos."
+                walls_note = ' | Ambos walls dentro del EM'
             elif cw_within:
-                em_note = f" El <b>Call Resistance esta dentro del rango esperado</b> — el rally podria frenarse en &#36;{call_wall:.0f}."
+                walls_note = ' | Call Wall dentro del EM'
             elif pw_within:
-                em_note = f" El <b>Put Support esta dentro del rango esperado</b> — una caida podria acelerarse al romper &#36;{put_wall:.0f}."
-            interp.append(f'<b>Expected Move ±{expected_move_pct:.1f}%</b> (&#36;{dn_t:.0f} — &#36;{up_t:.0f}) para {selected_exp}. El mercado de opciones esta "apostando" a que el precio se mantendra en este rango con ~68% de probabilidad.{em_note}')
+                walls_note = ' | Put Wall dentro del EM'
+            interp.append(f'<b>EXPECTED MOVE:</b> &#177;{expected_move_pct:.1f}% (&#36;{dn_t:.0f}—&#36;{up_t:.0f}) vs Rango Walls {range_pw_cw_pct:.0f}% → <b style="color:{em_color};">{em_vs_range}</b>{walls_note}')
 
-        # 8/ P/C RATIO CONTEXT
+        # 4/ POSITIONING (one line)
         if pc_ratio_oi > 1.3:
-            interp.append(f'<b>Put/Call OI = {pc_ratio_oi:.2f}</b> — Ratio alto. Hay <b>mucha mas proteccion put que especulacion call</b>. Paradojicamente, esto puede ser contrarian bullish: demasiado pesimismo puede generar un short squeeze si el catalizador es positivo.')
+            pc_bias = '<b style="color:#3fb950;">contrarian bullish</b>'
         elif pc_ratio_oi < 0.6:
-            interp.append(f'<b>Put/Call OI = {pc_ratio_oi:.2f}</b> — Ratio bajo. <b>Poca proteccion put vs calls</b>. El mercado esta complaciente — vulnerable a una caida sorpresa porque pocos estan cubiertos.')
-        elif pc_ratio_oi > 0:
-            interp.append(f'<b>Put/Call OI = {pc_ratio_oi:.2f}</b> — Ratio normal. El posicionamiento esta equilibrado sin sesgo extremo.')
-
-        # 9/ STRATEGY SUGGESTIONS
-        strategy_items = []
-        if total_net_gex > 0 and range_pw_cw_pct < 8:
-            strategy_items.append(('Iron Condor / Credit Spread', 'Gamma positiva + rango estrecho entre walls = <b>venta de prima favorable</b>. El pinning effect mantiene el precio dentro del rango.'))
-            strategy_items.append(('Sell Straddle/Strangle', f'Vender volatilidad cerca de &#36;{gamma_wall:.0f} (gamma wall). Dealers comprimen el rango — beneficia vendedores de opciones.'))
-        elif total_net_gex > 0 and range_pw_cw_pct >= 8:
-            strategy_items.append(('Bull/Bear Credit Spread', f'Gamma positiva pero rango amplio ({range_pw_cw_pct:.0f}%). Vende spreads fuera del rango &#36;{put_wall:.0f}—&#36;{call_wall:.0f}.'))
-        elif total_net_gex < 0 and abs(pct_to_cw) < 3:
-            strategy_items.append(('Call Debit Spread', f'Gamma negativa con precio cerca del Call Wall. Un break por encima de &#36;{call_wall:.0f} puede generar <b>gamma squeeze alcista</b>. Spread con riesgo definido.'))
-            strategy_items.append(('Put como proteccion', f'Si tienes posicion larga, compra put cerca de &#36;{put_wall:.0f} — gamma negativa amplifica caidas si falla el breakout.'))
-        elif total_net_gex < 0 and abs(pct_to_pw) < 3:
-            strategy_items.append(('Put Debit Spread', f'Gamma negativa con precio cerca del Put Wall. Un break por debajo de &#36;{put_wall:.0f} puede generar <b>gamma avalanche bajista</b>.'))
-            strategy_items.append(('Protective Call', f'Si estas corto, protege con call en &#36;{call_wall:.0f} — gamma negativa puede rebotar agresivamente.'))
+            pc_bias = '<b style="color:#f85149;">complacencia</b>'
         else:
-            if total_net_gex < 0:
-                strategy_items.append(('Straddle / Long Volatility', 'Gamma negativa = dealers amplifican. <b>Compra de volatilidad</b> favorecida. El precio se movera mas de lo esperado.'))
-                strategy_items.append(('Wider Stops', 'En regimen de gamma negativa, los stops ajustados se ejecutan facilmente. Usa stops mas amplios o opciones en lugar de stops.'))
-            else:
-                strategy_items.append(('Mean Reversion', f'Gamma positiva favorece <b>comprar dips</b> cerca de &#36;{put_wall:.0f} y <b>vender rallies</b> cerca de &#36;{call_wall:.0f}. Dealers frenan los extremos.'))
+            pc_bias = 'neutral'
+        skew_label = '<b style="color:#f85149;">FEAR</b>' if skew > 10 else ('<b style="color:#3fb950;">GREED</b>' if skew < -3 else 'neutral')
+        interp.append(f'<b>POSICIONAMIENTO:</b> P/C OI {pc_ratio_oi:.2f} ({pc_bias}) | Skew {skew:+.1f}pp ({skew_label}) | OI Total {total_oi:,}')
 
-        # 10/ DIRECTIONAL CONCLUSION
+        # 5/ PROFILE (one line)
+        if cum_at_spot > cum_max * 0.7 and cum_max > 0:
+            profile_note = 'Colchon a la baja, poco soporte gamma al alza'
+        elif cum_at_spot < cum_min * 0.7 and cum_min < 0:
+            profile_note = 'Mayor riesgo a la baja — zona de amplificacion debajo'
+        else:
+            profile_note = 'Transicion de regimen cerca del precio actual (HVL)'
+        interp.append(f'<b style="color:#d29922;">PERFIL GEX:</b> {profile_note}')
+
+        # 6/ DIRECTIONAL CONFLUENCE
         bullish_points = 0
         bearish_points = 0
         if total_net_gex > 0:
-            bullish_points += 1  # stability favors holders
+            bullish_points += 1
         else:
-            bearish_points += 1  # amplification = risk
+            bearish_points += 1
         if pct_to_cw > pct_to_pw and pct_to_pw > 0:
-            bullish_points += 1  # more room to upside
+            bullish_points += 1
         elif pct_to_pw > pct_to_cw and pct_to_cw > 0:
-            bearish_points += 1  # more room to downside
+            bearish_points += 1
         if pc_ratio_oi > 1.2:
-            bullish_points += 1  # contrarian
+            bullish_points += 1
         elif pc_ratio_oi < 0.7:
-            bearish_points += 1  # complacency
+            bearish_points += 1
         if mp_dist_pct > 2:
-            bearish_points += 1  # above max pain = gravity down
+            bearish_points += 1
         elif mp_dist_pct < -2:
-            bullish_points += 1  # below max pain = gravity up
+            bullish_points += 1
         if skew > 10:
-            bearish_points += 1  # fear
+            bearish_points += 1
         elif skew < -3:
             bullish_points += 1
 
         if bullish_points > bearish_points + 1:
-            directional = f'<b style="color:#3fb950;">SESGO ALCISTA</b> por estructura gamma. El posicionamiento de opciones favorece estabilidad o movimiento al alza. La estructura de mercado "empuja" levemente hacia arriba (gravedad max pain, gamma positiva, o exceso de puts).'
+            dir_color, dir_label = '#3fb950', 'SESGO ALCISTA'
         elif bearish_points > bullish_points + 1:
-            directional = f'<b style="color:#f85149;">SESGO BAJISTA</b> por estructura gamma. El posicionamiento de opciones crea vulnerabilidad a la baja (gamma negativa, precio sobre max pain, skew de miedo, o complacencia en cobertura).'
+            dir_color, dir_label = '#f85149', 'SESGO BAJISTA'
         else:
-            directional = f'<b style="color:#d29922;">NEUTRAL / SIN SESGO CLARO</b> por estructura gamma. Los factores alcistas y bajistas estan equilibrados. El precio probablemente se mueva por <b>catalizadores fundamentales</b> (earnings, macro, news) mas que por flujos de gamma.'
+            dir_color, dir_label = '#d29922', 'NEUTRAL'
+        interp.append(f'<b style="color:{dir_color};">CONFLUENCIA: {dir_label}</b> ({bullish_points} alcistas / {bearish_points} bajistas de 5 factores)')
 
-        interp.append(f'<b style="color:#d29922;">Conclusion direccional:</b> {directional}')
+        # Render condensed interpretation
+        st.markdown(f"""<div style="background:#161b22; padding:12px 16px; border-radius:8px; border-left:3px solid {regime_color};">
+            {''.join(f'<div style="font-size:0.8rem; color:#e6edf3; padding:3px 0; border-bottom:1px solid #21262d;">{text}</div>' for text in interp)}
+        </div>""", unsafe_allow_html=True)
 
-        # Render interpretation
-        for i, text in enumerate(interp):
-            border_color = '#30363d'
-            if i == len(interp) - 1:
-                border_color = '#d29922'  # highlight conclusion
-            st.markdown(f"""<div style="background:#161b22; padding:8px 14px; border-radius:6px; margin-bottom:4px; border-left:3px solid {border_color};">
-                <span style="color:#6e7681; font-size:0.7rem; font-weight:700;">{i+1}/</span>
-                <span style="font-size:0.78rem; color:#e6edf3;"> {text}</span>
-            </div>""", unsafe_allow_html=True)
-
-        # Strategies section
-        if strategy_items:
-            st.markdown("#### Estrategias sugeridas")
-            for strat_name, strat_desc in strategy_items:
-                st.markdown(f"""<div style="background:#161b22; padding:10px 14px; border-radius:6px; margin-bottom:4px; border-left:3px solid #58a6ff;">
-                    <div style="color:#58a6ff; font-size:0.8rem; font-weight:700;">{strat_name}</div>
-                    <div style="color:#e6edf3; font-size:0.75rem; margin-top:3px;">{strat_desc}</div>
-                </div>""", unsafe_allow_html=True)
-
-        st.markdown('<div style="color:#6e7681; font-size:0.65rem; margin-top:6px;">Gamma no predice direccion. Describe <b>como</b> se movera el precio una vez que empiece a moverse. Esto NO es consejo financiero. El analisis gamma es un factor mas — no operes basandote solo en GEX.</div>', unsafe_allow_html=True)
+        st.markdown('<div style="color:#9CA3AF; font-size:0.75rem; margin-top:6px;">Gamma describe <b>como</b> se mueve el precio, no <b>hacia donde</b>. Este analisis muestra confluencia de datos — no constituye recomendacion de inversion. Ver estrategia recomendada arriba.</div>', unsafe_allow_html=True)
 
     # =====================================================================
     # ROW 3: IV SMILE + TOP STRIKES TABLE
@@ -4771,6 +4964,79 @@ def _show_fundamental_tab(ticker: str, data: dict):
             ("Vs. 52W High", _val(pct_from_high, "+.1f", "%"), "#10B981" if pct_from_high > -5 else ("#F59E0B" if pct_from_high > -20 else "#EF4444")),
         ])
         st.markdown(card, unsafe_allow_html=True)
+
+    # =========================================================================
+    # HISTORICAL P/E CHART
+    # =========================================================================
+    st.markdown("---")
+    with st.expander("📊 P/E Histórico (hasta 10 años)", expanded=False):
+        from webapp.data.providers import get_historical_pe
+        import plotly.graph_objects as _go_pe
+        _pe_hist = get_historical_pe(ticker)
+        if _pe_hist['error'] and not _pe_hist['years']:
+            st.info(f"No hay datos históricos de P/E suficientes para {ticker}. {_pe_hist['error'] or ''}")
+        elif not _pe_hist['years']:
+            st.info(f"No hay datos históricos de P/E para {ticker}.")
+        else:
+            _years = _pe_hist['years']
+            _pe_vals = _pe_hist['pe_values']
+            _avg = _pe_hist['avg_pe']
+            _cur = _pe_hist['current_pe']
+            _rank = _pe_hist['pct_rank']
+            _n = _pe_hist['num_years']
+
+            # Color each bar: green if below average, red if 30%+ above average
+            _bar_colors = []
+            for v in _pe_vals:
+                if v <= _avg:
+                    _bar_colors.append('#3fb950')
+                elif v <= _avg * 1.3:
+                    _bar_colors.append('#d29922')
+                else:
+                    _bar_colors.append('#f85149')
+
+            _fig_pe = _go_pe.Figure()
+            _fig_pe.add_trace(_go_pe.Bar(
+                x=[str(y) for y in _years],
+                y=_pe_vals,
+                marker_color=_bar_colors,
+                name='P/E Anual',
+                text=[f'{v:.1f}x' for v in _pe_vals],
+                textposition='outside',
+                textfont=dict(size=10, color='#e6edf3'),
+            ))
+            # Average line
+            _fig_pe.add_hline(y=_avg, line_dash='dash', line_color='#58a6ff',
+                              annotation_text=f'Media {_n}A: {_avg:.1f}x',
+                              annotation_position='top left',
+                              annotation_font_color='#58a6ff')
+            # Current P/E line
+            if _cur > 0:
+                _fig_pe.add_hline(y=_cur, line_dash='dot', line_color='#bc8cff',
+                                  annotation_text=f'Actual: {_cur:.1f}x',
+                                  annotation_position='top right',
+                                  annotation_font_color='#bc8cff')
+            _fig_pe.update_layout(
+                paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
+                font=dict(color='#e6edf3', size=11),
+                margin=dict(t=30, b=10, l=10, r=10),
+                height=240,
+                showlegend=False,
+                xaxis=dict(showgrid=False, tickfont=dict(color='#8b949e')),
+                yaxis=dict(gridcolor='#21262d', tickfont=dict(color='#8b949e'),
+                           title=dict(text='P/E', font=dict(color='#8b949e'))),
+            )
+            st.plotly_chart(_fig_pe, use_container_width=True)
+
+            # Summary row
+            _rank_color = '#f85149' if _rank >= 75 else ('#d29922' if _rank >= 50 else '#3fb950')
+            _rank_label = 'CARO vs historia' if _rank >= 75 else ('NORMAL' if _rank >= 30 else 'BARATO vs historia')
+            st.markdown(f'''<div style="display:flex;gap:20px;font-size:0.8rem;color:#8b949e;padding:4px 0;">
+                <span>📅 Años de datos: <b style="color:#e6edf3;">{_n}</b></span>
+                <span>📊 Media histórica: <b style="color:#58a6ff;">{_avg:.1f}x</b></span>
+                <span>📌 P/E actual: <b style="color:#bc8cff;">{_cur:.1f}x</b></span>
+                <span>📈 Percentil: <b style="color:{_rank_color};">{_rank:.0f}% — {_rank_label}</b></span>
+            </div>''', unsafe_allow_html=True)
 
     # =========================================================================
     # ROW 2: VALUATION MODELS
@@ -5220,14 +5486,17 @@ def show_score_page():
         spy_chg = macro_data.get('spy_chg', 0)
 
         # Determine stress level and color
+        # RISK-ON requires ≥72 (tightened from 70) to reduce false positives during geopolitical tension
         if macro_score < 25:
             stress_label, stress_color, stress_bg = 'EXTREME STRESS', '#f85149', 'rgba(248,81,73,0.15)'
         elif macro_score < 40:
             stress_label, stress_color, stress_bg = 'HIGH STRESS', '#f0883e', 'rgba(240,136,62,0.15)'
         elif macro_score < 55:
             stress_label, stress_color, stress_bg = 'CAUTELA', '#d29922', 'rgba(210,153,34,0.12)'
-        elif macro_score < 70:
+        elif macro_score < 65:
             stress_label, stress_color, stress_bg = 'NORMAL', '#58a6ff', 'rgba(88,166,255,0.08)'
+        elif macro_score < 72:
+            stress_label, stress_color, stress_bg = 'VIGILANT', '#bc8cff', 'rgba(188,140,255,0.10)'
         else:
             stress_label, stress_color, stress_bg = 'RISK-ON', '#3fb950', 'rgba(63,185,80,0.10)'
 
@@ -5310,9 +5579,29 @@ def show_score_page():
 
     st.caption(f"{len(filtered_tickers)} tickers selected")
 
-    all_scores_df = get_all_scores_batch(tuple(filtered_tickers))
+    # --- Session-state caching for instant page load ---
+    tickers_key = str(sorted(filtered_tickers))  # stable key
+    cache_key = f'scores_cache_{hash(tickers_key)}'
+    has_cached = cache_key in st.session_state and st.session_state[cache_key] is not None
 
-    if all_scores_df.empty:
+    col_refresh, col_status = st.columns([1, 4])
+    with col_refresh:
+        force_refresh = st.button("🔄 Refresh", key="score_refresh_btn", type="secondary")
+    with col_status:
+        if has_cached and not force_refresh:
+            st.caption("Showing cached scores. Click Refresh for latest data.")
+
+    if has_cached and not force_refresh:
+        all_scores_df = st.session_state[cache_key]
+    else:
+        with st.status(f"Computing scores for {len(filtered_tickers)} tickers...", expanded=True) as status:
+            st.write(f"Downloading price data for {len(filtered_tickers)} tickers...")
+            all_scores_df = get_all_scores_batch(tuple(filtered_tickers))
+            status.update(label=f"Scores ready — {len(all_scores_df)} tickers scored", state="complete")
+        if all_scores_df is not None and not all_scores_df.empty:
+            st.session_state[cache_key] = all_scores_df
+
+    if all_scores_df is None or all_scores_df.empty:
         st.warning("Could not compute scores. Try again later.")
         return
 
@@ -5382,38 +5671,71 @@ def show_score_page():
                     'Score CP', 'Señal CP', 'Score MP', 'Señal MP', 'Score LP', 'Señal LP', 'Accion']
     table_cols = [c for c in display_cols if c in sorted_df.columns]
 
-    # Quick navigate to a ticker from the table
-    nav_col1, nav_col2 = st.columns([3, 1])
-    with nav_col1:
-        ticker_options = sorted_df['Ticker'].tolist()
-        selected_nav = st.selectbox("Quick navigate to ticker", [""] + ticker_options,
-                                     key="score_nav_ticker", format_func=lambda x: x if x else "Select a ticker to analyze...")
-    with nav_col2:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if selected_nav and st.button("Analyze →", key="score_nav_btn", type="primary", use_container_width=True):
-            navigate_to_stock(selected_nav)
-            st.rerun()
+    st.markdown('<div style="color:#8b949e;font-size:0.78rem;margin-bottom:4px;">💡 Haz clic en cualquier fila para abrir el análisis completo del ticker.</div>', unsafe_allow_html=True)
 
-    st.dataframe(
-        sorted_df[table_cols],
-        use_container_width=True,
-        hide_index=True,
-        height=620,
-        column_config={
-            "Ticker": st.column_config.TextColumn("Ticker", width="small"),
-            "Empresa": st.column_config.TextColumn("Company", width="medium"),
-            "Region": st.column_config.TextColumn("Region", width="small"),
-            "Sector": st.column_config.TextColumn("Sector", width="small"),
-            "Precio": st.column_config.TextColumn("Price", width="small"),
-            "Score CP": st.column_config.ProgressColumn("ST Score", min_value=0, max_value=100, format="%d"),
-            "Score MP": st.column_config.ProgressColumn("MT Score", min_value=0, max_value=100, format="%d"),
-            "Score LP": st.column_config.ProgressColumn("LT Score", min_value=0, max_value=100, format="%d"),
-            "Señal CP": st.column_config.TextColumn("ST Signal", width="small"),
-            "Señal MP": st.column_config.TextColumn("MT Signal", width="small"),
-            "Señal LP": st.column_config.TextColumn("LT Signal", width="small"),
-            "Accion": st.column_config.TextColumn("Action", width="medium"),
-        },
-    )
+    _col_config = {
+        "Ticker": st.column_config.TextColumn("Ticker", width="small"),
+        "Empresa": st.column_config.TextColumn("Company", width="medium"),
+        "Region": st.column_config.TextColumn("Region", width="small"),
+        "Sector": st.column_config.TextColumn("Sector", width="small"),
+        "Precio": st.column_config.TextColumn("Price", width="small"),
+        "Score CP": st.column_config.ProgressColumn("ST Score", min_value=0, max_value=100, format="%d"),
+        "Score MP": st.column_config.ProgressColumn("MT Score", min_value=0, max_value=100, format="%d"),
+        "Score LP": st.column_config.ProgressColumn("LT Score", min_value=0, max_value=100, format="%d"),
+        "Señal CP": st.column_config.TextColumn("ST Signal", width="small"),
+        "Señal MP": st.column_config.TextColumn("MT Signal", width="small"),
+        "Señal LP": st.column_config.TextColumn("LT Signal", width="small"),
+        "Accion": st.column_config.TextColumn("Action", width="medium"),
+    }
+
+    # Row-click navigation — on_select="rerun" (Streamlit ≥1.35)
+    # IMPORTANT: st.rerun() must be called OUTSIDE try/except because it raises
+    # RerunException (subclass of Exception) which would be silently swallowed.
+    _clicked_ticker = None
+    _use_fallback = False
+
+    try:
+        _selection = st.dataframe(
+            sorted_df[table_cols],
+            use_container_width=True,
+            hide_index=True,
+            height=620,
+            on_select="rerun",
+            selection_mode="single-row",
+            column_config=_col_config,
+            key="score_main_table",
+        )
+        if _selection and _selection.selection and _selection.selection.rows:
+            _row_idx = _selection.selection.rows[0]
+            if 0 <= _row_idx < len(sorted_df):
+                _clicked_ticker = sorted_df.iloc[_row_idx]['Ticker']
+    except TypeError:
+        _use_fallback = True
+    except Exception:
+        _use_fallback = True
+
+    if _use_fallback:
+        st.dataframe(
+            sorted_df[table_cols],
+            use_container_width=True,
+            hide_index=True,
+            height=620,
+            column_config=_col_config,
+        )
+        nav_col1, nav_col2 = st.columns([3, 1])
+        with nav_col1:
+            ticker_options = sorted_df['Ticker'].tolist()
+            selected_nav = st.selectbox("Navigate to ticker", [""] + ticker_options,
+                                         key="score_nav_ticker", format_func=lambda x: x if x else "Select a ticker...")
+        with nav_col2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if selected_nav and st.button("Analyze →", key="score_nav_btn", type="primary", use_container_width=True):
+                _clicked_ticker = selected_nav
+
+    # Navigate outside any try/except so RerunException propagates correctly
+    if _clicked_ticker:
+        navigate_to_stock(_clicked_ticker)
+        st.rerun()
 
     csv = sorted_df[table_cols].to_csv(index=False)
     st.download_button("Export CSV", data=csv,
@@ -5424,7 +5746,7 @@ def show_score_page():
     # BACKTESTING VALIDATION SECTION
     # =========================================================================
     st.markdown("---")
-    with st.expander("Backtesting Validation (last 2 years, 25 liquid US stocks)", expanded=False):
+    with st.expander("Backtesting Profesional — 60 stocks · 3 años · costes incluidos · IS/OOS split", expanded=False):
         _render_backtest_results()
 
 
@@ -5436,15 +5758,25 @@ def _run_backtest_cached(horizon: str = 'short_term') -> dict:
 
 
 def _render_backtest_results():
-    """Render backtesting validation results in Score page."""
-    hz_col, run_col = st.columns([2, 1])
-    with hz_col:
-        bt_horizon = st.selectbox("Backtest Horizon",
-                                   ["short_term", "medium_term", "long_term"],
-                                   format_func=lambda x: {"short_term": "Short Term (5-day hold)",
-                                                           "medium_term": "Medium Term (21-day hold)",
-                                                           "long_term": "Long Term (63-day hold)"}[x],
-                                   key="bt_horizon")
+    """Render professional backtesting validation results in Score page."""
+    import plotly.graph_objects as go
+
+    bt_horizon = st.selectbox("Backtest Horizon",
+                               ["short_term", "medium_term", "long_term"],
+                               format_func=lambda x: {"short_term": "Short Term (5-day hold)",
+                                                       "medium_term": "Medium Term (21-day hold)",
+                                                       "long_term": "Long Term (63-day hold)"}[x],
+                               key="bt_horizon")
+
+    # Professional disclaimer
+    st.markdown("""<div style="background:#161b22;border:1px solid #30363d;border-radius:6px;
+        padding:8px 12px;margin-bottom:10px;font-size:0.75rem;color:#8b949e;">
+        <b style="color:#d29922;">⚠ Backtest Methodology:</b>
+        60 liquid US stocks · 3-year walk-forward · 0.20% round-trip transaction costs included ·
+        Real ^VIX regime classification · In-sample (2Y) vs Out-of-Sample (1Y) split ·
+        <b style="color:#f85149;">Survivorship bias present</b> (uses currently-liquid stocks) ·
+        Past performance does not predict future results.
+    </div>""", unsafe_allow_html=True)
 
     report = _run_backtest_cached(bt_horizon)
 
@@ -5457,79 +5789,140 @@ def _render_backtest_results():
     equity = report.get('equity_curve')
     benchmark = report.get('benchmark_curve')
     factor_attr = report.get('factor_attribution', {})
+    oos = metrics.get('oos_metrics', {})
+    monthly_bd = metrics.get('monthly_breakdown', {})
 
-    # Summary metrics row
-    m1, m2, m3, m4, m5 = st.columns(5)
-    with m1:
-        st.metric("Sharpe Ratio", f"{metrics.get('sharpe_ratio', 0):.2f}")
-    with m2:
-        st.metric("Max Drawdown", f"{metrics.get('max_drawdown', 0):.1f}%")
-    with m3:
-        st.metric("Win Rate", f"{metrics.get('win_rate', 0):.0f}%")
-    with m4:
-        st.metric("Profit Factor", f"{metrics.get('profit_factor', 0):.2f}")
-    with m5:
-        st.metric("Alpha vs SPY", f"{metrics.get('alpha_vs_spy', 0):+.1f}%")
+    # ---- Row 1: Core risk-adjusted metrics (8 cols) ----
+    alpha_sig = metrics.get('alpha_significant', False)
+    alpha_p = metrics.get('alpha_p_value', 1.0)
+    alpha_label = f"{metrics.get('alpha_vs_spy', 0):+.1f}% {'✓' if alpha_sig else ''}"
+    alpha_help = f"p={alpha_p:.3f} — {'Significativo al 95%' if alpha_sig else 'No significativo estadísticamente'}"
 
-    # Equity curve chart
+    c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
+    with c1: st.metric("Sharpe", f"{metrics.get('sharpe_ratio', 0):.2f}", help="Sharpe anualizado (ret/vol) × √52")
+    with c2: st.metric("Sortino", f"{metrics.get('sortino_ratio', 0):.2f}", help="Como Sharpe pero solo penaliza pérdidas (downside deviation)")
+    with c3: st.metric("Calmar", f"{metrics.get('calmar_ratio', 0):.2f}", help="Retorno anualizado / Max Drawdown — calidad del riesgo asumido")
+    with c4: st.metric("Info Ratio", f"{metrics.get('information_ratio', 0):.2f}", help="Excess return vs SPY / tracking error — consistencia del alpha")
+    with c5: st.metric("Max DD", f"{metrics.get('max_drawdown', 0):.1f}%")
+    with c6: st.metric("Win Rate", f"{metrics.get('win_rate', 0):.0f}%")
+    with c7: st.metric("Profit Factor", f"{metrics.get('profit_factor', 0):.2f}", help="Suma ganancias / Suma pérdidas. >1.3 = estrategia viable")
+    with c8: st.metric("Alpha vs SPY", alpha_label, help=alpha_help)
+
+    # ---- In-sample vs Out-of-sample banner ----
+    is_data = oos.get('in_sample', {})
+    oos_data = oos.get('out_of_sample', {})
+    if is_data or oos_data:
+        st.markdown("**In-Sample (2Y) vs Out-of-Sample (1Y) — clave para detectar overfitting:**")
+        oos_c1, oos_c2, oos_c3, oos_c4 = st.columns(4)
+        with oos_c1:
+            st.metric("IS Hit Rate", f"{is_data.get('hit_rate', 0):.0f}%",
+                      help=f"In-sample: {is_data.get('count', 0)} trades")
+        with oos_c2:
+            st.metric("OOS Hit Rate", f"{oos_data.get('hit_rate', 0):.0f}%",
+                      help=f"Out-of-sample: {oos_data.get('count', 0)} trades — más fiable")
+        with oos_c3:
+            is_ret = is_data.get('avg_return', 0)
+            oos_ret = oos_data.get('avg_return', 0)
+            delta_ret = oos_ret - is_ret
+            st.metric("IS Avg Ret", f"{is_ret:+.2f}%")
+        with oos_c4:
+            oos_color = "normal" if oos_ret > 0 else "inverse"
+            st.metric("OOS Avg Ret", f"{oos_ret:+.2f}%",
+                      delta=f"{delta_ret:+.2f}% vs IS",
+                      delta_color="normal" if delta_ret > -0.5 else "inverse",
+                      help="Si OOS ≈ IS, el modelo generaliza bien. Si OOS <<< IS, hay overfitting.")
+
+    # ---- Equity curve chart ----
     if equity is not None and benchmark is not None and len(equity) > 0:
-        st.markdown("#### Equity Curve: Portfolio vs SPY")
-        import plotly.graph_objects as go
+        st.markdown("#### Equity Curve: Portfolio STRONG BUY vs SPY (base 100)")
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=equity.index, y=equity.values,
-                                  name='STRONG BUY Portfolio', line=dict(color='#3fb950', width=2)))
+                                  name='STRONG BUY Portfolio', line=dict(color='#3fb950', width=2),
+                                  fill='tozeroy', fillcolor='rgba(63,185,80,0.05)'))
         fig.add_trace(go.Scatter(x=benchmark.index, y=benchmark.values,
                                   name='SPY Benchmark', line=dict(color='#58a6ff', width=2, dash='dot')))
+        # OOS shaded region
+        if oos_data.get('count', 0) > 0 and equity is not None and len(equity) > 0:
+            oos_start = equity.index[max(0, len(equity) - int(len(equity) * 0.33))]
+            fig.add_vrect(x0=oos_start, x1=equity.index[-1],
+                          fillcolor='rgba(188,140,255,0.06)', layer='below', line_width=0,
+                          annotation_text='OOS', annotation_position='top left',
+                          annotation_font_color='#bc8cff', annotation_font_size=10)
         fig.update_layout(
-            template='plotly_dark',
-            paper_bgcolor='#0d1117',
-            plot_bgcolor='#161b22',
-            height=350,
-            margin=dict(l=40, r=20, t=30, b=30),
-            legend=dict(orientation='h', y=1.1),
+            template='plotly_dark', paper_bgcolor='#0d1117', plot_bgcolor='#161b22',
+            height=320, margin=dict(l=40, r=20, t=20, b=30),
+            legend=dict(orientation='h', y=1.05),
             yaxis_title='Value (base 100)',
         )
         st.plotly_chart(fig, use_container_width=True, key="bt_equity_chart")
 
-    # Signal accuracy table
+    # ---- Monthly Return Heatmap ----
+    if monthly_bd:
+        st.markdown("#### Monthly Return Heatmap (STRONG BUY Portfolio)")
+        months_short = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+        years_sorted = sorted(monthly_bd.keys())
+        z_vals, text_vals = [], []
+        for yr in years_sorted:
+            row_z, row_t = [], []
+            for mo in range(1, 13):
+                val = monthly_bd.get(yr, {}).get(mo, None)
+                row_z.append(val if val is not None else 0)
+                row_t.append(f"{val:+.1f}%" if val is not None else "N/A")
+            z_vals.append(row_z)
+            text_vals.append(row_t)
+        fig_hm = go.Figure(go.Heatmap(
+            z=z_vals, x=months_short, y=[str(y) for y in years_sorted],
+            text=text_vals, texttemplate="%{text}", textfont=dict(size=10),
+            colorscale=[[0, '#f85149'], [0.5, '#161b22'], [1, '#3fb950']],
+            zmid=0, zmin=-8, zmax=8,
+            colorbar=dict(title='%', tickfont=dict(color='#8b949e')),
+            hoverongaps=False,
+        ))
+        fig_hm.update_layout(
+            paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
+            font=dict(color='#e6edf3'), height=max(120, len(years_sorted) * 40 + 60),
+            margin=dict(l=50, r=40, t=20, b=30),
+            xaxis=dict(side='top'),
+        )
+        st.plotly_chart(fig_hm, use_container_width=True, key="bt_monthly_heatmap")
+
+    # ---- Signal accuracy table ----
     if signal_stats:
-        st.markdown("#### Signal Accuracy")
+        st.markdown("#### Signal Accuracy (incl. 0.20% transaction costs)")
         rows_html = ""
         for signal in ['STRONG_BUY', 'BUY', 'HOLD', 'SELL']:
             stats = signal_stats.get(signal, {})
             if not stats:
                 continue
             hit = stats.get('hit_rate', 0)
-            hit_color = '#3fb950' if hit >= 60 else ('#d29922' if hit >= 50 else '#f85149')
+            hit_color = '#3fb950' if hit >= 58 else ('#d29922' if hit >= 50 else '#f85149')
             avg_ret = stats.get('avg_return', 0)
             ret_color = '#3fb950' if avg_ret > 0 else '#f85149'
-            rows_html += f"""<tr>
-                <td style="font-weight:600;">{signal.replace('_', ' ')}</td>
-                <td style="color:{hit_color};font-weight:600;">{hit:.0f}%</td>
-                <td style="color:{ret_color};">{avg_ret:+.2f}%</td>
-                <td>{stats.get('median_return', 0):+.2f}%</td>
-                <td>{stats.get('count', 0)}</td>
-                <td style="color:#3fb950;">{stats.get('best', 0):+.1f}%</td>
-                <td style="color:#f85149;">{stats.get('worst', 0):+.1f}%</td>
+            rows_html += f"""<tr style="border-bottom:1px solid #21262d;">
+                <td style="padding:6px;font-weight:600;color:#e6edf3;">{signal.replace('_', ' ')}</td>
+                <td style="padding:6px;color:{hit_color};font-weight:600;">{hit:.0f}%</td>
+                <td style="padding:6px;color:{ret_color};">{avg_ret:+.2f}%</td>
+                <td style="padding:6px;color:#8b949e;">{stats.get('median_return', 0):+.2f}%</td>
+                <td style="padding:6px;color:#8b949e;">{stats.get('count', 0)}</td>
+                <td style="padding:6px;color:#3fb950;">{stats.get('best', 0):+.1f}%</td>
+                <td style="padding:6px;color:#f85149;">{stats.get('worst', 0):+.1f}%</td>
             </tr>"""
 
-        st.markdown(f"""
-        <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+        st.markdown(f"""<div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
             <thead><tr style="border-bottom:1px solid #30363d;">
                 <th style="text-align:left;padding:6px;color:#8b949e;">Signal</th>
                 <th style="text-align:left;padding:6px;color:#8b949e;">Hit Rate</th>
                 <th style="text-align:left;padding:6px;color:#8b949e;">Avg Return</th>
                 <th style="text-align:left;padding:6px;color:#8b949e;">Median</th>
-                <th style="text-align:left;padding:6px;color:#8b949e;">Count</th>
+                <th style="text-align:left;padding:6px;color:#8b949e;">Trades</th>
                 <th style="text-align:left;padding:6px;color:#8b949e;">Best</th>
                 <th style="text-align:left;padding:6px;color:#8b949e;">Worst</th>
             </tr></thead>
             <tbody>{rows_html}</tbody>
-        </table></div>
-        """, unsafe_allow_html=True)
+        </table></div>""", unsafe_allow_html=True)
 
-    # Factor attribution (score quintiles)
+    # ---- Factor attribution (score quintiles) ----
     if factor_attr:
         st.markdown("#### Factor Attribution (Score Quintile Analysis)")
         fa_rows = ""
@@ -5539,66 +5932,59 @@ def _render_backtest_results():
                 continue
             avg_r = fa.get('avg_return', 0)
             r_color = '#3fb950' if avg_r > 0 else '#f85149'
-            fa_rows += f"""<tr>
-                <td>{quintile}</td>
-                <td style="color:{r_color};">{avg_r:+.2f}%</td>
-                <td>{fa.get('hit_rate', 0):.0f}%</td>
-                <td>{fa.get('count', 0)}</td>
+            fa_rows += f"""<tr style="border-bottom:1px solid #21262d;">
+                <td style="padding:6px;color:#e6edf3;">{quintile}</td>
+                <td style="padding:6px;color:{r_color};">{avg_r:+.2f}%</td>
+                <td style="padding:6px;color:#e6edf3;">{fa.get('hit_rate', 0):.0f}%</td>
+                <td style="padding:6px;color:#8b949e;">{fa.get('count', 0)}</td>
             </tr>"""
+        if fa_rows:
+            st.markdown(f"""<div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                <thead><tr style="border-bottom:1px solid #30363d;">
+                    <th style="text-align:left;padding:6px;color:#8b949e;">Score Quintile</th>
+                    <th style="text-align:left;padding:6px;color:#8b949e;">Avg Fwd Return</th>
+                    <th style="text-align:left;padding:6px;color:#8b949e;">Hit Rate</th>
+                    <th style="text-align:left;padding:6px;color:#8b949e;">Trades</th>
+                </tr></thead>
+                <tbody>{fa_rows}</tbody>
+            </table></div>""", unsafe_allow_html=True)
 
-        st.markdown(f"""
-        <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
-            <thead><tr style="border-bottom:1px solid #30363d;">
-                <th style="text-align:left;padding:6px;color:#8b949e;">Score Quintile</th>
-                <th style="text-align:left;padding:6px;color:#8b949e;">Avg Forward Return</th>
-                <th style="text-align:left;padding:6px;color:#8b949e;">Hit Rate</th>
-                <th style="text-align:left;padding:6px;color:#8b949e;">Trades</th>
-            </tr></thead>
-            <tbody>{fa_rows}</tbody>
-        </table></div>
-        """, unsafe_allow_html=True)
-
-    # --- Macro Regime Analysis ---
+    # ---- VIX Regime Analysis ----
     regime_stats = metrics.get('regime_stats', {})
     if regime_stats:
-        st.markdown("**Macro Regime Analysis** (VIX-based)")
+        st.markdown("**Rendimiento por Régimen VIX (^VIX real)**")
         regime_rows = ""
         regime_icons = {'low_vol': '🟢', 'normal': '🔵', 'high_vol': '🟡', 'crisis': '🔴'}
-        regime_labels = {'low_vol': 'Low Vol (VIX&lt;15)', 'normal': 'Normal (15-25)',
-                         'high_vol': 'High Vol (25-35)', 'crisis': 'Crisis (VIX&gt;35)'}
+        regime_labels = {'low_vol': 'Low Vol (VIX&lt;15)', 'normal': 'Normal (15-22)',
+                         'high_vol': 'High Vol (22-30)', 'crisis': 'Crisis (VIX≥30)'}
         for regime in ['low_vol', 'normal', 'high_vol', 'crisis']:
             rs = regime_stats.get(regime, {})
             if rs.get('count', 0) == 0:
                 continue
             avg_r = rs.get('avg_return', 0)
-            wr = rs.get('win_rate', 0)
-            cnt = rs.get('count', 0)
             r_color = '#3fb950' if avg_r > 0 else '#f85149'
-            icon = regime_icons.get(regime, '')
-            label = regime_labels.get(regime, regime)
             regime_rows += f"""<tr style="border-bottom:1px solid #21262d;">
-                <td style="padding:6px;color:#e6edf3;">{icon} {label}</td>
+                <td style="padding:6px;color:#e6edf3;">{regime_icons.get(regime, '')} {regime_labels.get(regime, regime)}</td>
                 <td style="padding:6px;color:{r_color};">{avg_r:+.2f}%</td>
-                <td style="padding:6px;color:#e6edf3;">{wr:.0f}%</td>
-                <td style="padding:6px;color:#8b949e;">{cnt}</td>
+                <td style="padding:6px;color:#e6edf3;">{rs.get('hit_rate', 0):.0f}%</td>
+                <td style="padding:6px;color:#8b949e;">{rs.get('count', 0)}</td>
             </tr>"""
         if regime_rows:
-            st.markdown(f"""
-            <div style="overflow-x:auto;">
-            <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+            st.markdown(f"""<div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
                 <thead><tr style="border-bottom:1px solid #30363d;">
                     <th style="text-align:left;padding:6px;color:#8b949e;">VIX Regime</th>
                     <th style="text-align:left;padding:6px;color:#8b949e;">Avg Return</th>
-                    <th style="text-align:left;padding:6px;color:#8b949e;">Win Rate</th>
+                    <th style="text-align:left;padding:6px;color:#8b949e;">Hit Rate</th>
                     <th style="text-align:left;padding:6px;color:#8b949e;">Trades</th>
                 </tr></thead>
                 <tbody>{regime_rows}</tbody>
-            </table></div>
-            """, unsafe_allow_html=True)
+            </table></div>""", unsafe_allow_html=True)
 
-    st.caption(f"Total trades analyzed: {metrics.get('total_trades', 0)} | "
-               f"Avg return per trade: {metrics.get('avg_return', 0):+.2f}%")
+    st.caption(f"Total trades: {metrics.get('total_trades', 0)} · "
+               f"Avg return/trade: {metrics.get('avg_return', 0):+.2f}% (after costs) · "
+               f"Alpha p-value: {metrics.get('alpha_p_value', 1.0):.3f}")
 
 
 # =============================================================================
