@@ -269,11 +269,12 @@ class MultiHorizonScorer:
         Short-term uses wider bands (more volatile signals).
         Long-term uses tighter bands centered on fundamentals.
         """
+        # Thresholds recalibrated to yield ~10-15% STRONG_BUY in normal markets
+        # (was ~3-5% which was too strict given regression-to-50 from missing data).
         if horizon == 'short_term':
-            # ST: wider spread, easier to reach extremes
-            if score >= 66:
+            if score >= 63:
                 return Signal.STRONG_BUY
-            elif score >= 57:
+            elif score >= 56:
                 return Signal.BUY
             elif score >= 50:
                 return Signal.ACCUMULATE
@@ -284,11 +285,11 @@ class MultiHorizonScorer:
             else:
                 return Signal.SELL
         elif horizon == 'medium_term':
-            if score >= 63:
+            if score >= 60:
                 return Signal.STRONG_BUY
-            elif score >= 56:
+            elif score >= 54:
                 return Signal.BUY
-            elif score >= 49:
+            elif score >= 48:
                 return Signal.ACCUMULATE
             elif score >= 41:
                 return Signal.HOLD
@@ -297,11 +298,11 @@ class MultiHorizonScorer:
             else:
                 return Signal.SELL
         else:  # long_term
-            if score >= 62:
+            if score >= 59:
                 return Signal.STRONG_BUY
-            elif score >= 55:
+            elif score >= 53:
                 return Signal.BUY
-            elif score >= 48:
+            elif score >= 47:
                 return Signal.ACCUMULATE
             elif score >= 40:
                 return Signal.HOLD

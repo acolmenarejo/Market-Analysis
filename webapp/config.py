@@ -50,67 +50,122 @@ DEFAULT_HISTORY_DAYS = 90
 # Universo de tickers por región
 TICKER_UNIVERSE_BY_REGION = {
     'US': [
-        # Big Tech
-        'AAPL', 'MSFT', 'GOOGL', 'META', 'AMZN', 'NVDA', 'TSLA', 'NFLX',
+        # Big Tech / Mega Cap
+        'AAPL', 'MSFT', 'GOOGL', 'GOOG', 'META', 'AMZN', 'NVDA', 'TSLA', 'NFLX', 'AVGO',
         # Semiconductores
-        'AVGO', 'AMD', 'INTC', 'QCOM', 'MU', 'TSM', 'AMAT', 'LRCX', 'MRVL', 'ARM', 'SMCI',
-        'ON', 'KLAC', 'NXPI', 'TER', 'MPWR', 'SWKS',
-        # Software / Cloud
+        'AMD', 'INTC', 'QCOM', 'MU', 'TSM', 'AMAT', 'LRCX', 'MRVL', 'ARM', 'SMCI',
+        'ON', 'KLAC', 'NXPI', 'TER', 'MPWR', 'SWKS', 'ASML', 'WOLF', 'ENTG', 'COHR',
+        'CRDO', 'ALAB', 'AEHR', 'POWI', 'OLED',
+        # Software / Cloud / AI
         'CRM', 'ORCL', 'IBM', 'NOW', 'ADBE', 'PLTR', 'SNOW', 'DDOG', 'ZS', 'CRWD',
-        'PANW', 'NET', 'TTD', 'HUBS', 'WDAY', 'TEAM', 'ZM', 'DOCU',
-        'FTNT', 'MNDY', 'MDB', 'BILL', 'CELH', 'IONQ', 'SOUN',
-        # Fintech
+        'PANW', 'NET', 'TTD', 'HUBS', 'WDAY', 'TEAM', 'ZM', 'DOCU', 'OKTA', 'SPLK',
+        'FTNT', 'MNDY', 'MDB', 'BILL', 'CELH', 'IONQ', 'SOUN', 'INTU', 'CDNS', 'SNPS',
+        'ANSS', 'ADSK', 'ROP', 'TYL', 'GTLB', 'S', 'CFLT', 'ESTC', 'TWLO', 'U',
+        'BRZE', 'PATH', 'AI', 'BBAI', 'TEM', 'APP',
+        # Fintech / Payments
         'V', 'MA', 'PYPL', 'XYZ', 'COIN', 'HOOD', 'SOFI', 'AFRM', 'UPST', 'FISV', 'GPN',
-        # Banks
+        'FI', 'FIS', 'NU', 'TOST', 'MQ', 'LMND', 'OPEN',
+        # Banks / Brokers
         'JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'SCHW', 'BLK', 'USB', 'PNC', 'TFC', 'AXP',
+        'COF', 'STT', 'BK', 'ALLY', 'KEY', 'RF', 'FITB', 'HBAN', 'CFG', 'MTB',
+        'IBKR', 'TROW', 'AMP',
         # Healthcare / Biotech
         'UNH', 'JNJ', 'PFE', 'MRK', 'ABBV', 'LLY', 'GILD', 'BMY', 'AMGN', 'REGN', 'MRNA', 'VRTX',
         'ISRG', 'DXCM', 'ILMN', 'BIIB', 'ZTS', 'CI', 'HUM', 'ELV', 'TMO', 'ABT', 'SYK', 'MDT',
-        # Consumer
+        'CVS', 'DHR', 'BSX', 'EW', 'BDX', 'A', 'IDXX', 'IQV', 'RMD', 'WST',
+        'NVO', 'TAK', 'BNTX', 'CRSP', 'BEAM', 'NTLA', 'VKTX', 'SRPT', 'INCY', 'NBIX',
+        # Consumer Discretionary
         'PG', 'KO', 'PEP', 'WMT', 'COST', 'HD', 'MCD', 'NKE', 'SBUX', 'TGT', 'LOW',
-        'LULU', 'DECK', 'EL', 'CL', 'GIS', 'KHC', 'MNST', 'STZ',
+        'LULU', 'DECK', 'EL', 'CL', 'GIS', 'KHC', 'MNST', 'STZ', 'TJX', 'BKNG',
+        'CMG', 'YUM', 'ORLY', 'AZO', 'ROST', 'BURL', 'DG', 'DLTR', 'KR', 'SYY',
+        'F', 'GM', 'STLA', 'TM', 'HMC', 'CHWY', 'ETSY', 'W', 'PTON',
         # Energy
         'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'OXY', 'PSX', 'MPC', 'VLO', 'DVN', 'FANG',
+        'HES', 'KMI', 'WMB', 'ENB', 'TRP', 'OKE', 'EQT', 'CTRA', 'APA', 'MRO',
+        'PXD', 'TPL', 'CHK', 'SM',
         # Defense / Aerospace
-        'LMT', 'RTX', 'NOC', 'GD', 'BA', 'HII', 'LHX', 'TDG',
+        'LMT', 'RTX', 'NOC', 'GD', 'BA', 'HII', 'LHX', 'TDG', 'AXON', 'KTOS', 'LDOS',
+        'SAIC', 'BAH', 'HEI', 'HWM', 'CW',
         # Industrials
         'CAT', 'DE', 'UNP', 'UPS', 'FDX', 'HON', 'GE', 'MMM', 'EMR', 'ETN', 'ITW', 'PH',
+        'CARR', 'OTIS', 'JCI', 'TT', 'DOV', 'PWR', 'NSC', 'CSX', 'WAB', 'CMI',
+        'PCAR', 'GWW', 'FAST', 'EXPD', 'ODFL', 'XPO', 'CHRW',
         # Telecom / Media
-        'VZ', 'T', 'TMUS', 'DIS', 'CMCSA', 'CHTR', 'WBD', 'FOX',
+        'VZ', 'T', 'TMUS', 'DIS', 'CMCSA', 'CHTR', 'WBD', 'FOX', 'PARA', 'NWSA',
+        'TKO', 'LBRDA', 'LBRDK',
         # REITs / Utilities
         'AMT', 'PLD', 'NEE', 'DUK', 'SO', 'SPG', 'O', 'EQIX', 'PSA', 'CCI', 'D', 'AEP', 'SRE',
+        'EXC', 'XEL', 'PCG', 'EIX', 'PEG', 'WEC', 'AWK', 'DLR', 'WELL', 'VICI',
+        'EXR', 'AVB', 'MAA', 'CPT', 'EQR', 'ESS', 'ARE', 'BXP',
         # Growth / High-volume
-        'UBER', 'ABNB', 'SHOP', 'SPOT', 'RBLX', 'SNAP', 'PINS', 'ROKU',
-        'RIVN', 'LCID', 'MELI', 'SE', 'GRAB', 'DASH', 'LYFT', 'CPNG',
-        # Materials / Mining
-        'FCX', 'NEM', 'LIN', 'APD', 'ECL', 'NUE',
+        'UBER', 'ABNB', 'SHOP', 'SPOT', 'RBLX', 'SNAP', 'PINS', 'ROKU', 'DASH', 'LYFT',
+        'RIVN', 'LCID', 'MELI', 'SE', 'GRAB', 'CPNG', 'BIDU', 'JD', 'BABA', 'PDD',
+        'NIO', 'XPEV', 'LI',
+        # Materials / Mining / Chemicals
+        'FCX', 'NEM', 'LIN', 'APD', 'ECL', 'NUE', 'DOW', 'DD', 'PPG', 'SHW',
+        'CTVA', 'CF', 'MOS', 'FMC', 'ALB', 'AA', 'X', 'CLF', 'STLD', 'RS',
         # Insurance
-        'BRK-B', 'PGR', 'TRV', 'ALL', 'MET',
-        # AI / Robotics
-        'PATH', 'AI', 'RKLB', 'LUNR',
+        'BRK-B', 'PGR', 'TRV', 'ALL', 'MET', 'CB', 'AIG', 'PRU', 'AFL', 'HIG',
+        'WRB', 'AJG', 'MMC', 'AON',
+        # AI / Robotics / Space / Quantum
+        'RKLB', 'LUNR', 'ASTS', 'ACHR', 'JOBY', 'RGTI', 'QBTS', 'ARQQ', 'INVZ',
+        # Crypto / Mining
+        'MSTR', 'MARA', 'RIOT', 'CLSK', 'WULF', 'BITF', 'CIFR', 'HUT', 'BITO',
+        # ETF references (for cross-validation)
+        'SPY', 'QQQ', 'IWM', 'DIA',
     ],
     'Europe': [
-        # UK (.L) — FTSE blue chips
-        'SHEL.L', 'AZN.L', 'HSBA.L', 'ULVR.L', 'BP.L', 'GSK.L', 'RIO.L',
-        'LSEG.L', 'DGE.L', 'REL.L', 'BARC.L', 'LLOY.L',
-        'VOD.L', 'BT-A.L', 'NG.L', 'SSE.L', 'GLEN.L', 'AAL.L',
-        # Germany (.DE) — DAX
-        'SAP.DE', 'SIE.DE', 'ALV.DE', 'DTE.DE', 'AIR.DE', 'BAS.DE',
-        'MBG.DE', 'BMW.DE', 'MUV2.DE', 'IFX.DE', 'ADS.DE',
-        'RHM.DE', 'HEN3.DE', 'DB1.DE', 'VOW3.DE',
+        # UK (.L) — FTSE 100/250
+        'SHEL.L', 'AZN.L', 'HSBA.L', 'ULVR.L', 'BP.L', 'GSK.L', 'RIO.L', 'BHP.L',
+        'LSEG.L', 'DGE.L', 'REL.L', 'BARC.L', 'LLOY.L', 'NWG.L', 'STAN.L',
+        'VOD.L', 'BT-A.L', 'NG.L', 'SSE.L', 'GLEN.L', 'AAL.L', 'ANTO.L', 'FRES.L',
+        'PRU.L', 'AV.L', 'LGEN.L', 'III.L', 'ABF.L', 'RKT.L', 'IMB.L', 'BATS.L',
+        'CRH.L', 'EXPN.L', 'RR.L', 'BA.L', 'CCH.L', 'NXT.L', 'JD.L', 'CPG.L',
+        'SMIN.L', 'SGE.L', 'INF.L', 'WPP.L', 'AHT.L', 'BNZL.L',
+        # Germany (.DE) — DAX 40 + MDAX
+        'SAP.DE', 'SIE.DE', 'ALV.DE', 'DTE.DE', 'AIR.DE', 'BAS.DE', 'BAYN.DE',
+        'MBG.DE', 'BMW.DE', 'MUV2.DE', 'IFX.DE', 'ADS.DE', 'PUM.DE',
+        'RHM.DE', 'HEN3.DE', 'DB1.DE', 'VOW3.DE', 'POR3.DE', 'CON.DE',
+        'DPW.DE', 'EOAN.DE', 'RWE.DE', 'FRE.DE', 'FME.DE', 'MRK.DE',
+        'HEI.DE', 'BNR.DE', 'SHL.DE', 'ZAL.DE', 'SY1.DE', 'DBK.DE',
+        'CBK.DE', 'LHA.DE', 'TKA.DE', 'EVK.DE',
         # France (.PA) — CAC 40
-        'MC.PA', 'OR.PA', 'TTE.PA', 'SAN.PA', 'AI.PA', 'SU.PA',
-        'BN.PA', 'CS.PA', 'KER.PA', 'EL.PA', 'SGO.PA', 'CAP.PA',
-        # Spain (.MC)
+        'MC.PA', 'OR.PA', 'TTE.PA', 'SAN.PA', 'AI.PA', 'SU.PA', 'BNP.PA',
+        'BN.PA', 'CS.PA', 'KER.PA', 'EL.PA', 'SGO.PA', 'CAP.PA', 'GLE.PA',
+        'ACA.PA', 'ENGI.PA', 'VIE.PA', 'DG.PA', 'HO.PA', 'STM.PA', 'ML.PA',
+        'RNO.PA', 'STLAP.PA', 'PUB.PA', 'LR.PA', 'RI.PA', 'AC.PA', 'EN.PA',
+        'CA.PA', 'ORA.PA', 'VIV.PA',
+        # Spain (.MC) — IBEX 35
         'ITX.MC', 'SAN.MC', 'IBE.MC', 'TEF.MC', 'BBVA.MC', 'FER.MC', 'AMS.MC',
-        # Netherlands (.AS)
-        'ASML.AS', 'PHIA.AS', 'UNA.AS', 'INGA.AS', 'AD.AS', 'WKL.AS',
-        # Switzerland (.SW)
+        'REP.MC', 'CABK.MC', 'ELE.MC', 'ACS.MC', 'NTGY.MC', 'AENA.MC',
+        'GRF.MC', 'ANA.MC', 'MAP.MC', 'CLNX.MC', 'MRL.MC', 'RED.MC', 'SAB.MC',
+        'BKT.MC', 'IAG.MC', 'ROVI.MC', 'LOG.MC', 'COL.MC',
+        # Netherlands (.AS) — AEX
+        'ASML.AS', 'PHIA.AS', 'UNA.AS', 'INGA.AS', 'AD.AS', 'WKL.AS', 'PRX.AS',
+        'HEIA.AS', 'ASRNL.AS', 'AKZA.AS', 'DSM.AS', 'ASM.AS', 'BESI.AS',
+        'KPN.AS', 'NN.AS', 'RAND.AS', 'IMCD.AS', 'JDEP.AS', 'EXO.AS',
+        # Switzerland (.SW) — SMI
         'NESN.SW', 'ROG.SW', 'NOVN.SW', 'UBSG.SW', 'ABBN.SW', 'SREN.SW',
-        # Italy (.MI)
-        'ENI.MI', 'ISP.MI', 'UCG.MI', 'ENEL.MI', 'RACE.MI',
-        # Nordic
+        'ZURN.SW', 'CFR.SW', 'GIVN.SW', 'LONN.SW', 'HOLN.SW', 'SIKA.SW',
+        'GEBN.SW', 'ALC.SW', 'PGHN.SW', 'KNIN.SW', 'SCMN.SW', 'SOON.SW',
+        'LOGN.SW', 'STMN.SW', 'SLHN.SW',
+        # Italy (.MI) — FTSE MIB
+        'ENI.MI', 'ISP.MI', 'UCG.MI', 'ENEL.MI', 'RACE.MI', 'STLAM.MI',
+        'STM.MI', 'G.MI', 'MB.MI', 'TIT.MI', 'PIRC.MI', 'PRY.MI',
+        'MONC.MI', 'BMED.MI', 'CPR.MI', 'TRN.MI', 'BAMI.MI', 'BPE.MI',
+        'IP.MI', 'TEN.MI', 'ATL.MI', 'BPSO.MI',
+        # Nordic — Sweden (.ST), Denmark (.CO), Finland (.HE), Norway (.OL)
         'NOVO-B.CO', 'ERIC-B.ST', 'VOLV-B.ST', 'SAND.ST', 'NESTE.HE',
+        'NOKIA.HE', 'KNEBV.HE', 'FORTUM.HE', 'UPM.HE', 'SAMPO.HE',
+        'ATCO-A.ST', 'INVE-B.ST', 'HM-B.ST', 'SHB-A.ST', 'SEB-A.ST',
+        'SWED-A.ST', 'TELIA.ST', 'ESSITY-B.ST', 'NDA-SE.ST', 'ASSA-B.ST',
+        'MAERSK-B.CO', 'CARL-B.CO', 'DSV.CO', 'ORSTED.CO', 'COLO-B.CO',
+        'DANSKE.CO', 'TRYG.CO',
+        'EQNR.OL', 'DNB.OL', 'TEL.OL', 'YAR.OL', 'NHY.OL', 'AKER.OL',
+        # Belgium (.BR), Portugal (.LS), Ireland
+        'ABI.BR', 'KBC.BR', 'UCB.BR', 'SOLB.BR',
+        'GALP.LS', 'EDP.LS', 'JMT.LS',
+        'RYAAY', 'CRH', 'STX', 'ICLR', 'JHX',
     ],
     'Asia': [
         # Japan (.T)

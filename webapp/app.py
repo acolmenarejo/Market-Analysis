@@ -39,6 +39,10 @@ from webapp.data.providers import (
     get_risk_exposure_score,
     get_score_explanation,
     calculate_konkorde,
+    calculate_supertrend,
+    calculate_stoch_rsi,
+    calculate_adx,
+    calculate_obv,
     get_all_ticker_changes,
     get_global_futures,
     get_earnings_calendar,
@@ -3075,6 +3079,12 @@ def show_stock_analysis():
         return
 
     if 'error' in data:
+        if data.get('error') == 'rate_limited':
+            st.warning(f"⚠️ {data.get('error_message', 'Rate limited by Yahoo Finance.')}")
+            if st.button("🔄 Reintentar", key=f"rl_retry_{ticker}", type="primary"):
+                get_stock_data.clear()
+                st.rerun()
+            return
         st.error(f"Error: {data['error']}")
         return
 
@@ -3292,39 +3302,41 @@ def _show_technical_tab(ticker: str, data: dict):
     from plotly.subplots import make_subplots
     import yfinance as yf
 
-    # Timeframe selector (period + interval like TradingView)
+    # Period selector (Yahoo Finance / broker convention: label = total range)
+    # Each label picks an interval that gives ~80-300 candles for a clean chart
     col_tf, col_kr = st.columns([2, 1])
     with col_tf:
-        # Map: label -> (period, interval)
-        # TradingView convention: label = candle size
         timeframes = {
-            "5m":  ("5d",  "5m"),     # 5 días de velas de 5 min (intraday)
-            "15m": ("10d", "15m"),    # 10 días de velas de 15 min
-            "1h":  ("1mo", "1h"),     # 1 mes de velas de 1 hora
-            "1D":  ("6mo", "1d"),     # 6 meses de velas diarias
-            "1W":  ("2y",  "1wk"),    # 2 años de velas semanales
-            "1M":  ("10y", "1mo"),    # 10 años de velas mensuales
+            "1D":  ("1d",   "5m"),    # 1 día - velas 5 min (~78 velas)
+            "5D":  ("5d",   "15m"),   # 5 días - velas 15 min (~130 velas)
+            "1M":  ("1mo",  "1h"),    # 1 mes - velas 1h (~150 velas)
+            "3M":  ("3mo",  "1d"),    # 3 meses - velas diarias (~65 velas)
+            "6M":  ("6mo",  "1d"),    # 6 meses - velas diarias (~125 velas)
+            "YTD": ("ytd",  "1d"),    # año en curso - velas diarias
+            "1Y":  ("1y",   "1d"),    # 1 año - velas diarias (~250 velas)
+            "5Y":  ("5y",   "1wk"),   # 5 años - velas semanales (~260 velas)
+            "MAX": ("max",  "1mo"),   # máximo - velas mensuales
         }
-        selected_tf = st.radio("Temporalidad", list(timeframes.keys()), index=3, horizontal=True, key="chart_tf")
+        selected_tf = st.radio(
+            "Periodo",
+            list(timeframes.keys()),
+            index=4,  # default to 6M
+            horizontal=True,
+            key="chart_tf",
+        )
         chart_period, chart_interval = timeframes[selected_tf]
     with col_kr:
         konkorde_y = st.slider("Rango Y Konkorde", 10, 100, 30, 5)
 
-    # Reload hist for selected period + interval (with retry on rate limit)
+    # Reload hist for selected period + interval (with retry + graceful fallback)
     try:
-        import time as _time
+        from webapp.data.providers import _yf_retry as _yf_r
         stock = yf.Ticker(ticker)
-        for _attempt in range(3):
-            try:
-                hist = stock.history(period=chart_period, interval=chart_interval)
-                if not hist.empty:
-                    data['history'] = hist
-                break
-            except Exception as _e:
-                if 'too many requests' in str(_e).lower() or '429' in str(_e):
-                    _time.sleep(2 * (2 ** _attempt))
-                else:
-                    break
+        _new_hist = _yf_r(lambda: stock.history(period=chart_period, interval=chart_interval))
+        if _new_hist is not None and not _new_hist.empty:
+            data['history'] = _new_hist
+        elif _new_hist is None:
+            st.caption("⚠️ Yahoo rate limit alcanzado en este periodo — mostrando histórico 6M en cache.")
     except Exception:
         pass
 
@@ -3337,6 +3349,10 @@ def _show_technical_tab(ticker: str, data: dict):
             from streamlit_lightweight_charts import renderLightweightCharts
 
             konkorde = calculate_konkorde(hist)
+            supertrend = calculate_supertrend(hist)
+            stoch_rsi = calculate_stoch_rsi(hist['Close'])
+            adx_data = calculate_adx(hist)
+            obv_series = calculate_obv(hist['Close'], hist['Volume'])
 
             # Prepare dataframe for lightweight-charts
             _df = hist.copy()
@@ -3357,6 +3373,26 @@ def _show_technical_tab(ticker: str, data: dict):
             _df['bb_upper'] = _df['sma20'] + 2 * _std20
             _df['bb_lower'] = _df['sma20'] - 2 * _std20
 
+            # Supertrend (split into bullish/bearish segments so we can color them differently)
+            st_line = supertrend.get('line', pd.Series(dtype=float))
+            st_dir = supertrend.get('direction', pd.Series(dtype=int))
+            if len(st_line) == len(_df):
+                _df['st_line'] = st_line.values
+                _df['st_dir'] = st_dir.values
+                _df['st_bull'] = np.where(_df['st_dir'] == 1, _df['st_line'], np.nan)
+                _df['st_bear'] = np.where(_df['st_dir'] == -1, _df['st_line'], np.nan)
+            else:
+                _df['st_bull'] = np.nan
+                _df['st_bear'] = np.nan
+
+            # OBV for confluence pane
+            if len(obv_series) == len(_df):
+                _df['obv'] = obv_series.values
+                _df['obv_ema'] = pd.Series(_df['obv']).ewm(span=20, adjust=False).mean()
+            else:
+                _df['obv'] = 0
+                _df['obv_ema'] = 0
+
             # Volume colors
             _df['color'] = np.where(_df['close'] >= _df['open'], 'rgba(63,185,80,0.7)', 'rgba(248,81,73,0.7)')
 
@@ -3373,6 +3409,10 @@ def _show_technical_tab(ticker: str, data: dict):
             _sma20_data = _to_records(_df[['time','sma20']].dropna().rename(columns={'sma20':'value'}))
             _bb_upper_data = _to_records(_df[['time','bb_upper']].dropna().rename(columns={'bb_upper':'value'}))
             _bb_lower_data = _to_records(_df[['time','bb_lower']].dropna().rename(columns={'bb_lower':'value'}))
+            _st_bull_data = _to_records(_df[['time','st_bull']].dropna().rename(columns={'st_bull':'value'}))
+            _st_bear_data = _to_records(_df[['time','st_bear']].dropna().rename(columns={'st_bear':'value'}))
+            _obv_data = _to_records(_df[['time','obv']].rename(columns={'obv':'value'}))
+            _obv_ema_data = _to_records(_df[['time','obv_ema']].rename(columns={'obv_ema':'value'}))
 
             # Konkorde data - fill NaN with 0 to prevent null crashes
             _k_df = _df[['time']].copy()
@@ -3427,6 +3467,9 @@ def _show_technical_tab(ticker: str, data: dict):
                 {"type": "Line", "data": _sma20_data, "options": {"color": "#d29922", "lineWidth": 1, "title": "SMA20"}},
                 {"type": "Line", "data": _bb_upper_data, "options": {"color": "rgba(139,148,158,0.5)", "lineWidth": 1, "lineStyle": 2}},
                 {"type": "Line", "data": _bb_lower_data, "options": {"color": "rgba(139,148,158,0.5)", "lineWidth": 1, "lineStyle": 2}},
+                # Supertrend (green when bullish, red when bearish — flips are entry signals)
+                {"type": "Line", "data": _st_bull_data, "options": {"color": "#3fb950", "lineWidth": 2, "title": "Supertrend"}},
+                {"type": "Line", "data": _st_bear_data, "options": {"color": "#f85149", "lineWidth": 2, "title": "Supertrend"}},
             ]
 
             # Pane 2: Konkorde
@@ -3499,18 +3542,117 @@ def _show_technical_tab(ticker: str, data: dict):
         st.metric("Vol vs Media", f"{vol_ratio:.1f}x", vol_sig)
 
         st.markdown("---")
+        st.markdown("**Indicadores Medio Plazo**")
+
+        # Supertrend
+        st_signal = supertrend.get('signal', 'neutral')
+        st_emoji = {'bullish_flip': '🚀', 'bullish': '🟢', 'bearish_flip': '⚠️', 'bearish': '🔴'}.get(st_signal, '⚪')
+        st_label_map = {
+            'bullish_flip': 'CAMBIO ALCISTA',
+            'bullish': 'Alcista',
+            'bearish_flip': 'CAMBIO BAJISTA',
+            'bearish': 'Bajista',
+        }
+        st_line_val = supertrend.get('line', pd.Series(dtype=float))
+        st_value = float(st_line_val.iloc[-1]) if not st_line_val.empty else 0.0
+        st.metric("Supertrend", f"${st_value:.2f} {st_emoji}", st_label_map.get(st_signal, 'Neutral'))
+
+        # Stochastic RSI
+        stoch_k_series = stoch_rsi.get('k', pd.Series(dtype=float))
+        stoch_d_series = stoch_rsi.get('d', pd.Series(dtype=float))
+        stoch_k = float(stoch_k_series.iloc[-1]) if not stoch_k_series.empty and not pd.isna(stoch_k_series.iloc[-1]) else 50
+        stoch_d = float(stoch_d_series.iloc[-1]) if not stoch_d_series.empty and not pd.isna(stoch_d_series.iloc[-1]) else 50
+        stoch_bull_cross = (
+            len(stoch_k_series) >= 2 and not pd.isna(stoch_k_series.iloc[-2]) and not pd.isna(stoch_d_series.iloc[-2])
+            and stoch_k_series.iloc[-2] <= stoch_d_series.iloc[-2] and stoch_k > stoch_d and stoch_k < 30
+        )
+        stoch_sig = "CRUCE ALCISTA" if stoch_bull_cross else (
+            "Sobreventa" if stoch_k < 20 else ("Sobrecompra" if stoch_k > 80 else "Neutral")
+        )
+        stoch_emoji = "🚀" if stoch_bull_cross else ("🟢" if stoch_k < 20 else ("🔴" if stoch_k > 80 else "🟡"))
+        st.metric("Stoch RSI", f"{stoch_k:.0f}/{stoch_d:.0f} {stoch_emoji}", stoch_sig)
+
+        # ADX trend strength
+        adx_series = adx_data.get('adx', pd.Series(dtype=float))
+        di_plus_series = adx_data.get('di_plus', pd.Series(dtype=float))
+        di_minus_series = adx_data.get('di_minus', pd.Series(dtype=float))
+        adx_val = float(adx_series.iloc[-1]) if not adx_series.empty and not pd.isna(adx_series.iloc[-1]) else 0
+        di_plus = float(di_plus_series.iloc[-1]) if not di_plus_series.empty and not pd.isna(di_plus_series.iloc[-1]) else 0
+        di_minus = float(di_minus_series.iloc[-1]) if not di_minus_series.empty and not pd.isna(di_minus_series.iloc[-1]) else 0
+        adx_dir = "alcista" if di_plus > di_minus else "bajista"
+        if adx_val >= 40:
+            adx_sig = f"Tendencia fuerte {adx_dir}"
+            adx_emoji = "🟢" if di_plus > di_minus else "🔴"
+        elif adx_val >= 25:
+            adx_sig = f"Tendencia {adx_dir}"
+            adx_emoji = "🟡"
+        else:
+            adx_sig = "Sin tendencia"
+            adx_emoji = "⚪"
+        st.metric("ADX (14)", f"{adx_val:.1f} {adx_emoji}", adx_sig)
+
+        # OBV trend
+        if len(obv_series) >= 20:
+            obv_ema_20 = obv_series.ewm(span=20, adjust=False).mean()
+            obv_above = obv_series.iloc[-1] > obv_ema_20.iloc[-1]
+            obv_sig = "Volumen acumulando" if obv_above else "Volumen distribuyendo"
+            obv_emoji = "🟢" if obv_above else "🔴"
+        else:
+            obv_above = None
+            obv_sig = "—"
+            obv_emoji = "⚪"
+        st.metric("OBV vs EMA20", obv_sig, obv_emoji)
+
+        st.markdown("---")
         st.metric("Mom 1M", f"{data['momentum_1m']:+.1f}%")
         st.metric("Mom 3M", f"{data['momentum_3m']:+.1f}%")
 
-    # Technical bias summary
-    bull_sig = sum([data['rsi'] < 40, data['macd_bullish'], data['momentum_1m'] > 0])
-    bear_sig = sum([data['rsi'] > 60, not data['macd_bullish'], data['momentum_1m'] < 0])
-    if bull_sig > bear_sig:
-        st.success(f"**Sesgo Tecnico: ALCISTA** ({bull_sig}/3 positivas) | RSI: {data['rsi']:.1f} | MACD: {data['macd_signal']} | Mom: {data['momentum_1m']:+.1f}%")
-    elif bear_sig > bull_sig:
-        st.error(f"**Sesgo Tecnico: BAJISTA** ({bear_sig}/3 negativas) | RSI: {data['rsi']:.1f} | MACD: {data['macd_signal']} | Mom: {data['momentum_1m']:+.1f}%")
+    # Medium-term Buy Confluence score: aggregate the modern indicators
+    confluence_signals = []
+    confluence_score = 0
+    if st_signal in ('bullish', 'bullish_flip'):
+        confluence_score += 2 if st_signal == 'bullish_flip' else 1
+        confluence_signals.append(f"Supertrend {'cambió a alcista' if st_signal == 'bullish_flip' else 'alcista'}")
+    if stoch_bull_cross:
+        confluence_score += 2
+        confluence_signals.append("Stoch RSI cruce alcista en sobreventa")
+    elif stoch_k < 20:
+        confluence_score += 1
+        confluence_signals.append("Stoch RSI en sobreventa")
+    if adx_val >= 25 and di_plus > di_minus:
+        confluence_score += 2 if adx_val >= 40 else 1
+        confluence_signals.append(f"ADX {adx_val:.0f} confirma tendencia alcista")
+    if obv_above:
+        confluence_score += 1
+        confluence_signals.append("OBV: acumulación de volumen")
+    if data.get('macd_bullish'):
+        confluence_score += 1
+        confluence_signals.append("MACD alcista")
+    if data['rsi'] < 40 and data['rsi'] > 25:
+        confluence_score += 1
+        confluence_signals.append("RSI en zona de oportunidad")
+
+    confluence_max = 10
+    confluence_pct = (confluence_score / confluence_max) * 100
+
+    if confluence_score >= 6:
+        st.success(
+            f"**Confluencia Compra MP: {confluence_score}/{confluence_max} ({confluence_pct:.0f}%)** — Setup fuerte. "
+            + " · ".join(confluence_signals[:4])
+        )
+    elif confluence_score >= 4:
+        st.info(
+            f"**Confluencia Compra MP: {confluence_score}/{confluence_max}** — Señales mixtas con sesgo positivo. "
+            + " · ".join(confluence_signals[:4])
+        )
+    elif confluence_score >= 2:
+        st.warning(
+            f"**Confluencia Compra MP: {confluence_score}/{confluence_max}** — Setup débil. Esperar confirmación."
+        )
     else:
-        st.warning(f"**Sesgo Tecnico: NEUTRAL** | RSI: {data['rsi']:.1f} | MACD: {data['macd_signal']} | Mom: {data['momentum_1m']:+.1f}%")
+        st.error(
+            f"**Confluencia Compra MP: {confluence_score}/{confluence_max}** — No hay setup de compra. Tendencia adversa."
+        )
 
 
 def _show_options_tab(ticker: str, data: dict):
@@ -6213,7 +6355,7 @@ def _show_polymarket_tab():
         <div style="font-size:0.8rem; color:#94a3b8;">
             Identifica apuestas con patrones sospechosos: volumen concentrado en 24h,
             odds extremas, mercados con fechas especificas y actividad whale.
-            Ejemplo: alguien aposto $400k a que Maduro seria detenido un dia concreto.
+            Ejemplo: alguien aposto &#36;400k a que Maduro seria detenido un dia concreto.
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -6264,32 +6406,28 @@ def _show_polymarket_tab():
                     vol_total_str = f"&#36;{bet['volume_total']:,.0f}"
                     liq_str = f"&#36;{bet['liquidity']:,.0f}"
 
-                    st.markdown(f"""
-                    <div style="background:#161b22;
-                                border:1px solid {border_color}; border-left:4px solid {border_color};
-                                border-radius:10px; padding:14px; margin-bottom:8px;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                            <span style="font-weight:700; font-size:0.9rem; color:#e2e8f0;">{level_emoji} {question_safe}</span>
-                            <span style="background:{border_color}; color:white; padding:2px 10px; border-radius:12px; font-size:0.7rem; font-weight:600;">
-                                {level_label} ({sus_score}/100)
-                            </span>
-                        </div>
-                        <div style="display:flex; gap:20px; align-items:center; margin-bottom:6px; flex-wrap:wrap;">
-                            <span style="font-size:0.85rem; color:#e2e8f0;">
-                                Vol 24h: <b style="color:{border_color};">{vol_24h_str}</b>
-                            </span>
-                            <span style="font-size:0.85rem; color:#94a3b8;">
-                                Vol Total: {vol_total_str}
-                            </span>
-                            <span style="font-size:0.85rem; color:#94a3b8;">
-                                Liquidez: {liq_str}
-                            </span>
-                            {tickers_html}
-                        </div>
-                        <div style="margin-bottom:4px;">{odds_html}</div>
-                        <div style="font-size:0.75rem; color:#f97316;">{reasons_html}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    card_html = (
+                        f'<div style="background:#161b22;border:1px solid {border_color};'
+                        f'border-left:4px solid {border_color};border-radius:10px;'
+                        f'padding:14px;margin-bottom:8px;">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
+                        f'<span style="font-weight:700;font-size:0.9rem;color:#e2e8f0;">{level_emoji} {question_safe}</span>'
+                        f'<span style="background:{border_color};color:white;padding:2px 10px;'
+                        f'border-radius:12px;font-size:0.7rem;font-weight:600;">'
+                        f'{level_label} ({sus_score}/100)</span>'
+                        f'</div>'
+                        f'<div style="display:flex;gap:20px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">'
+                        f'<span style="font-size:0.85rem;color:#e2e8f0;">'
+                        f'Vol 24h: <b style="color:{border_color};">{vol_24h_str}</b></span>'
+                        f'<span style="font-size:0.85rem;color:#94a3b8;">Vol Total: {vol_total_str}</span>'
+                        f'<span style="font-size:0.85rem;color:#94a3b8;">Liquidez: {liq_str}</span>'
+                        f'{tickers_html}'
+                        f'</div>'
+                        f'<div style="margin-bottom:4px;">{odds_html}</div>'
+                        f'<div style="font-size:0.75rem;color:#f97316;">{reasons_html}</div>'
+                        f'</div>'
+                    )
+                    st.markdown(card_html, unsafe_allow_html=True)
             else:
                 st.info("No se detectaron apuestas sospechosas actualmente")
         except Exception as e:

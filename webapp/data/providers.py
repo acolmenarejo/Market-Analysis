@@ -204,6 +204,140 @@ def detect_konkorde_divergence(hist, konkorde: Dict[str, Any], lookback: int = 1
     }
 
 
+def calculate_supertrend(hist: pd.DataFrame, period: int = 10, multiplier: float = 3.0) -> Dict[str, pd.Series]:
+    """Supertrend indicator - dynamic trend line that flips on breakout.
+
+    Returns dict with:
+        - line: the trend line value at each bar
+        - direction: +1 (uptrend / buy) or -1 (downtrend / sell)
+        - signal: 'bullish_flip' | 'bearish_flip' | 'bullish' | 'bearish'
+    """
+    empty = {'line': pd.Series(dtype=float), 'direction': pd.Series(dtype=int), 'signal': 'neutral'}
+    if hist is None or len(hist) < period + 1:
+        return empty
+
+    high = hist['High'].ffill()
+    low = hist['Low'].ffill()
+    close = hist['Close'].ffill()
+
+    # ATR via Wilder's smoothing
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        (high - low),
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1 / period, adjust=False).mean()
+
+    hl2 = (high + low) / 2
+    upper_band = hl2 + multiplier * atr
+    lower_band = hl2 - multiplier * atr
+
+    final_upper = upper_band.copy()
+    final_lower = lower_band.copy()
+    for i in range(1, len(close)):
+        prev_fu = final_upper.iloc[i - 1]
+        prev_fl = final_lower.iloc[i - 1]
+        if upper_band.iloc[i] < prev_fu or close.iloc[i - 1] > prev_fu:
+            final_upper.iloc[i] = upper_band.iloc[i]
+        else:
+            final_upper.iloc[i] = prev_fu
+        if lower_band.iloc[i] > prev_fl or close.iloc[i - 1] < prev_fl:
+            final_lower.iloc[i] = lower_band.iloc[i]
+        else:
+            final_lower.iloc[i] = prev_fl
+
+    direction = pd.Series(1, index=close.index, dtype=int)
+    line = pd.Series(np.nan, index=close.index, dtype=float)
+    for i in range(len(close)):
+        if i == 0:
+            line.iloc[i] = final_lower.iloc[i]
+            continue
+        prev_line = line.iloc[i - 1]
+        prev_dir = direction.iloc[i - 1]
+        if prev_dir == 1:
+            if close.iloc[i] < final_lower.iloc[i]:
+                direction.iloc[i] = -1
+                line.iloc[i] = final_upper.iloc[i]
+            else:
+                direction.iloc[i] = 1
+                line.iloc[i] = final_lower.iloc[i]
+        else:
+            if close.iloc[i] > final_upper.iloc[i]:
+                direction.iloc[i] = 1
+                line.iloc[i] = final_lower.iloc[i]
+            else:
+                direction.iloc[i] = -1
+                line.iloc[i] = final_upper.iloc[i]
+
+    # Signal: detect last flip
+    signal = 'bullish' if direction.iloc[-1] == 1 else 'bearish'
+    if len(direction) >= 2:
+        if direction.iloc[-1] == 1 and direction.iloc[-2] == -1:
+            signal = 'bullish_flip'
+        elif direction.iloc[-1] == -1 and direction.iloc[-2] == 1:
+            signal = 'bearish_flip'
+
+    return {'line': line, 'direction': direction, 'signal': signal}
+
+
+def calculate_stoch_rsi(close: pd.Series, period: int = 14, smooth_k: int = 3, smooth_d: int = 3) -> Dict[str, pd.Series]:
+    """Stochastic RSI - sensitive momentum oscillator (0-100).
+
+    Returns dict with k, d series. Cross above 20 = bullish, below 80 = bearish.
+    """
+    if close is None or len(close) < period * 2:
+        return {'k': pd.Series(dtype=float), 'd': pd.Series(dtype=float)}
+    delta = close.diff()
+    gain = delta.where(delta > 0, 0).rolling(period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
+    rs = gain / (loss + 1e-9)
+    rsi = 100 - (100 / (1 + rs))
+    rsi_min = rsi.rolling(period).min()
+    rsi_max = rsi.rolling(period).max()
+    stoch = ((rsi - rsi_min) / (rsi_max - rsi_min + 1e-9)) * 100
+    k = stoch.rolling(smooth_k).mean()
+    d = k.rolling(smooth_d).mean()
+    return {'k': k, 'd': d}
+
+
+def calculate_adx(hist: pd.DataFrame, period: int = 14) -> Dict[str, pd.Series]:
+    """ADX trend strength + DI+ / DI- directional indicators."""
+    empty = {'adx': pd.Series(dtype=float), 'di_plus': pd.Series(dtype=float), 'di_minus': pd.Series(dtype=float)}
+    if hist is None or len(hist) < period * 2:
+        return empty
+    high = hist['High'].ffill()
+    low = hist['Low'].ffill()
+    close = hist['Close'].ffill()
+
+    up_move = high.diff()
+    down_move = -low.diff()
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        (high - low),
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+
+    atr = tr.ewm(alpha=1 / period, adjust=False).mean()
+    plus_di = 100 * pd.Series(plus_dm, index=high.index).ewm(alpha=1 / period, adjust=False).mean() / (atr + 1e-9)
+    minus_di = 100 * pd.Series(minus_dm, index=high.index).ewm(alpha=1 / period, adjust=False).mean() / (atr + 1e-9)
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di + 1e-9)
+    adx = dx.ewm(alpha=1 / period, adjust=False).mean()
+    return {'adx': adx, 'di_plus': plus_di, 'di_minus': minus_di}
+
+
+def calculate_obv(close: pd.Series, volume: pd.Series) -> pd.Series:
+    """On-Balance Volume - cumulative volume signed by price direction."""
+    if close is None or volume is None or len(close) == 0:
+        return pd.Series(dtype=float)
+    sign = np.sign(close.diff().fillna(0))
+    return (sign * volume.fillna(0)).cumsum()
+
+
 def calculate_konkorde(hist: pd.DataFrame) -> Dict[str, pd.Series]:
     """
     Calculate Konkorde 2.0 indicator.
@@ -349,19 +483,29 @@ def _get_fallback_congress_data() -> pd.DataFrame:
     return pd.DataFrame(columns=columns)
 
 
-def _yf_retry(fn, retries=3, base_delay=2):
-    """Execute a yfinance call with exponential backoff on rate limit."""
+def _yf_retry(fn, retries=4, base_delay=1.5, return_on_fail=None):
+    """Execute a yfinance call with exponential backoff on rate limit.
+
+    Returns ``return_on_fail`` (default None) instead of raising on persistent
+    rate-limit failure so callers can fall back gracefully. Non-rate-limit
+    errors still raise.
+    """
     import time
+    last_err = None
     for attempt in range(retries):
         try:
             return fn()
         except Exception as e:
             err_str = str(e).lower()
+            last_err = e
             if 'too many requests' in err_str or 'rate limit' in err_str or '429' in err_str:
                 if attempt < retries - 1:
                     time.sleep(base_delay * (2 ** attempt))
                     continue
+                return return_on_fail
             raise
+    if last_err is not None:
+        return return_on_fail
     return None
 
 
@@ -514,11 +658,28 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
     try:
         stock = yf.Ticker(ticker)
 
-        # Datos de precio (with retry on rate limit)
+        # Datos de precio (with retry on rate limit). _yf_retry returns None
+        # on persistent 429s instead of raising.
         hist = _yf_retry(lambda: stock.history(period=period))
+        info = _yf_retry(lambda: stock.info)
+
+        # If BOTH calls failed, it's a clear rate-limit / API failure: surface
+        # a friendly error so the UI can show a retry hint, rather than
+        # rendering a page full of zeros.
+        if hist is None and info is None:
+            return {
+                'ticker': ticker,
+                'error': 'rate_limited',
+                'error_message': (
+                    'Yahoo Finance ha limitado las peticiones (rate limit). '
+                    'Espera 30-60 segundos y pulsa "Reintentar". '
+                    'Los datos en cache de otros tickers siguen disponibles.'
+                ),
+                'price': 0, 'rsi': 50, 'macd_bullish': False, 'momentum_1m': 0,
+            }
+
         if hist is None:
             hist = pd.DataFrame()
-        info = _yf_retry(lambda: stock.info)
         if info is None:
             info = {}
 
@@ -3139,15 +3300,21 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
     # =========================================================================
     st_factors = []
 
-    # RSI
-    if rsi < 30:
-        st_factors.append(('RSI en sobreventa', +12, f'RSI={rsi:.0f} indica posible rebote', 'bullish'))
-    elif rsi < 40:
-        st_factors.append(('RSI bajo', +6, f'RSI={rsi:.0f} favorable', 'bullish'))
-    elif rsi > 75:
+    # RSI — granular
+    if rsi < 25:
+        st_factors.append(('RSI sobreventa extrema', +14, f'RSI={rsi:.0f} - rebote tecnico probable', 'bullish'))
+    elif rsi < 35:
+        st_factors.append(('RSI en sobreventa', +10, f'RSI={rsi:.0f} indica posible rebote', 'bullish'))
+    elif rsi < 45:
+        st_factors.append(('RSI bajo', +5, f'RSI={rsi:.0f} favorable para entrada', 'bullish'))
+    elif rsi < 55:
+        st_factors.append(('RSI neutral', +1, f'RSI={rsi:.0f} - sin extremos', 'bullish'))
+    elif rsi > 78:
         st_factors.append(('RSI sobrecompra extrema', -12, f'RSI={rsi:.0f} zona peligrosa', 'bearish'))
-    elif rsi > 65:
-        st_factors.append(('RSI elevado', -5, f'RSI={rsi:.0f} cercano a sobrecompra', 'bearish'))
+    elif rsi > 70:
+        st_factors.append(('RSI sobrecompra', -7, f'RSI={rsi:.0f} cercano a sobrecompra', 'bearish'))
+    elif rsi > 60:
+        st_factors.append(('RSI elevado', -3, f'RSI={rsi:.0f} en zona alta', 'bearish'))
 
     # MACD
     if macd_bullish and momentum_1m > 3:
@@ -3159,15 +3326,35 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
     elif not macd_bullish:
         st_factors.append(('MACD bajista', -4, 'Tendencia negativa', 'bearish'))
 
-    # Momentum 1M
-    if momentum_1m > 10:
+    # Momentum 1M — granular
+    if momentum_1m >= 15:
+        st_factors.append(('Momentum 1M explosivo', +12, f'+{momentum_1m:.1f}% en 1 mes', 'bullish'))
+    elif momentum_1m >= 8:
         st_factors.append(('Momentum 1M fuerte', +10, f'+{momentum_1m:.1f}% en 1 mes', 'bullish'))
-    elif momentum_1m > 3:
+    elif momentum_1m >= 3:
         st_factors.append(('Momentum 1M positivo', +5, f'+{momentum_1m:.1f}% en 1 mes', 'bullish'))
-    elif momentum_1m < -10:
+    elif momentum_1m >= 1:
+        st_factors.append(('Momentum 1M leve positivo', +2, f'+{momentum_1m:.1f}% en 1 mes', 'bullish'))
+    elif momentum_1m <= -15:
+        st_factors.append(('Momentum 1M colapso', -12, f'{momentum_1m:.1f}% en 1 mes', 'bearish'))
+    elif momentum_1m <= -8:
         st_factors.append(('Momentum 1M negativo fuerte', -10, f'{momentum_1m:.1f}% en 1 mes', 'bearish'))
-    elif momentum_1m < -3:
+    elif momentum_1m <= -3:
         st_factors.append(('Momentum 1M negativo', -5, f'{momentum_1m:.1f}% en 1 mes', 'bearish'))
+    elif momentum_1m <= -1:
+        st_factors.append(('Momentum 1M leve negativo', -2, f'{momentum_1m:.1f}% en 1 mes', 'bearish'))
+
+    # Volume context — every horizon benefits from knowing institutional interest
+    if volume_ratio >= 3:
+        st_factors.append(('Volumen excepcional', +8, f'{volume_ratio:.1f}x media - flujo institucional masivo', 'bullish'))
+    elif volume_ratio >= 1.5:
+        st_factors.append(('Volumen alto', +4, f'{volume_ratio:.1f}x media - interes institucional', 'bullish'))
+    elif volume_ratio >= 1.1:
+        st_factors.append(('Volumen por encima media', +2, f'{volume_ratio:.1f}x media', 'bullish'))
+    elif volume_ratio <= 0.4:
+        st_factors.append(('Volumen muy bajo', -5, f'{volume_ratio:.1f}x media - ilíquido', 'bearish'))
+    elif volume_ratio <= 0.7:
+        st_factors.append(('Volumen bajo', -3, f'{volume_ratio:.1f}x media - poco interes', 'bearish'))
 
     # Contrarian / Quality dip factors
     roe_val = roe  # already extracted from stock_data above
@@ -3181,14 +3368,6 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
     if vix_val > 25 and rsi < 45 and isinstance(margin_val, (int, float)) and margin_val > 10:
         st_factors.append(('VIX elevado + RSI bajo (contrarian)', +3,
             f'VIX={vix_val:.0f} con RSI={rsi:.0f} en empresa con margen {margin_val:.0f}% — panico puede ser oportunidad', 'bullish'))
-
-    # Volume
-    if volume_ratio > 2.5:
-        st_factors.append(('Volumen muy alto', +7, f'{volume_ratio:.1f}x vs media - fuerte interes institucional', 'bullish'))
-    elif volume_ratio > 1.5:
-        st_factors.append(('Volumen alto', +4, f'{volume_ratio:.1f}x vs media - interes institucional', 'bullish'))
-    elif volume_ratio < 0.5:
-        st_factors.append(('Volumen bajo', -4, f'{volume_ratio:.1f}x vs media - poco interes', 'bearish'))
 
     # Congress short-term
     if congress_signal == 'bullish':
@@ -3368,25 +3547,47 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
     # =========================================================================
     mt_factors = []
 
-    # Momentum 3M
-    if momentum_3m > 20:
-        mt_factors.append(('Momentum 3M muy fuerte', +12, f'+{momentum_3m:.1f}% en 3 meses', 'bullish'))
-    elif momentum_3m > 8:
+    # Momentum 3M — granular tiers so mid-range values still surface
+    if momentum_3m >= 25:
+        mt_factors.append(('Momentum 3M explosivo', +12, f'+{momentum_3m:.1f}% en 3 meses - tendencia muy fuerte', 'bullish'))
+    elif momentum_3m >= 15:
+        mt_factors.append(('Momentum 3M muy fuerte', +10, f'+{momentum_3m:.1f}% en 3 meses', 'bullish'))
+    elif momentum_3m >= 8:
         mt_factors.append(('Momentum 3M positivo', +6, f'+{momentum_3m:.1f}% en 3 meses', 'bullish'))
-    elif momentum_3m < -20:
-        mt_factors.append(('Momentum 3M negativo fuerte', -12, f'{momentum_3m:.1f}% en 3 meses', 'bearish'))
-    elif momentum_3m < -8:
+    elif momentum_3m >= 2:
+        mt_factors.append(('Momentum 3M leve positivo', +3, f'+{momentum_3m:.1f}% en 3 meses', 'bullish'))
+    elif momentum_3m <= -25:
+        mt_factors.append(('Momentum 3M colapso', -12, f'{momentum_3m:.1f}% en 3 meses', 'bearish'))
+    elif momentum_3m <= -15:
+        mt_factors.append(('Momentum 3M negativo fuerte', -10, f'{momentum_3m:.1f}% en 3 meses', 'bearish'))
+    elif momentum_3m <= -8:
         mt_factors.append(('Momentum 3M negativo', -6, f'{momentum_3m:.1f}% en 3 meses', 'bearish'))
+    elif momentum_3m <= -2:
+        mt_factors.append(('Momentum 3M leve negativo', -3, f'{momentum_3m:.1f}% en 3 meses', 'bearish'))
 
-    # Fundamental quality
-    if roe > 25:
-        mt_factors.append(('ROE excepcional', +8, f'ROE={roe:.1f}% - ventaja competitiva', 'bullish'))
-    elif roe > 15:
+    # Fundamental quality (ROE)
+    if roe >= 35:
+        mt_factors.append(('ROE excepcional', +10, f'ROE={roe:.1f}% - rentabilidad clase mundial', 'bullish'))
+    elif roe >= 20:
+        mt_factors.append(('ROE muy alto', +8, f'ROE={roe:.1f}% - ventaja competitiva', 'bullish'))
+    elif roe >= 12:
         mt_factors.append(('Calidad fundamental', +5, f'ROE={roe:.1f}% - buena rentabilidad', 'bullish'))
-    elif roe < 5 and roe > 0:
+    elif roe >= 6:
+        mt_factors.append(('ROE moderado', +2, f'ROE={roe:.1f}% - rentabilidad adecuada', 'bullish'))
+    elif 0 < roe < 6:
         mt_factors.append(('ROE bajo', -4, f'ROE={roe:.1f}% - poca rentabilidad', 'bearish'))
     elif roe < 0:
         mt_factors.append(('ROE negativo', -8, f'ROE={roe:.1f}% - destruye valor', 'bearish'))
+
+    # Operating margin (capacity to scale)
+    if operating_margin >= 25:
+        mt_factors.append(('Margen operativo alto', +5, f'OpMargin={operating_margin:.1f}% - pricing power', 'bullish'))
+    elif operating_margin >= 12:
+        mt_factors.append(('Margen operativo solido', +3, f'OpMargin={operating_margin:.1f}%', 'bullish'))
+    elif 0 < operating_margin < 5:
+        mt_factors.append(('Margen operativo ajustado', -3, f'OpMargin={operating_margin:.1f}%', 'bearish'))
+    elif operating_margin < 0:
+        mt_factors.append(('Perdidas operativas', -6, f'OpMargin={operating_margin:.1f}%', 'bearish'))
 
     # Forward P/E trend
     if forward_pe > 0 and pe > 0:
@@ -3396,17 +3597,45 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
             mt_factors.append(('Forward P/E deteriorando', -5, f'Forward={forward_pe:.1f} vs Actual={pe:.1f} (+{(forward_pe/pe-1)*100:.0f}%)', 'bearish'))
 
     # Earnings/Revenue growth
-    if earn_growth > 20:
+    if earn_growth > 30:
+        mt_factors.append(('Crecimiento BPA explosivo', +9, f'Earnings growth={earn_growth:.0f}% - hipercrecimiento', 'bullish'))
+    elif earn_growth > 15:
         mt_factors.append(('Crecimiento BPA fuerte', +7, f'Earnings growth={earn_growth:.0f}%', 'bullish'))
     elif earn_growth > 5:
         mt_factors.append(('Crecimiento BPA positivo', +3, f'Earnings growth={earn_growth:.0f}%', 'bullish'))
-    elif earn_growth < -10:
-        mt_factors.append(('BPA en caida', -7, f'Earnings growth={earn_growth:.0f}%', 'bearish'))
+    elif earn_growth < -20:
+        mt_factors.append(('BPA colapsando', -9, f'Earnings growth={earn_growth:.0f}%', 'bearish'))
+    elif earn_growth < -5:
+        mt_factors.append(('BPA en caida', -5, f'Earnings growth={earn_growth:.0f}%', 'bearish'))
 
-    if rev_growth > 15:
+    if rev_growth > 25:
+        mt_factors.append(('Revenue acelerando fuerte', +7, f'Revenue growth={rev_growth:.0f}% - escalando rapido', 'bullish'))
+    elif rev_growth > 10:
         mt_factors.append(('Revenue acelerando', +5, f'Revenue growth={rev_growth:.0f}%', 'bullish'))
-    elif rev_growth < -5:
-        mt_factors.append(('Revenue contrayendo', -5, f'Revenue growth={rev_growth:.0f}%', 'bearish'))
+    elif rev_growth > 2:
+        mt_factors.append(('Revenue creciendo', +2, f'Revenue growth={rev_growth:.0f}%', 'bullish'))
+    elif rev_growth < -10:
+        mt_factors.append(('Revenue contrayendo fuerte', -7, f'Revenue growth={rev_growth:.0f}%', 'bearish'))
+    elif rev_growth < -2:
+        mt_factors.append(('Revenue contrayendo', -4, f'Revenue growth={rev_growth:.0f}%', 'bearish'))
+
+    # FCF Yield (medium term cash generation)
+    if fcf_yield > 8:
+        mt_factors.append(('FCF Yield alto', +5, f'FCF yield={fcf_yield:.1f}% - generacion caja excepcional', 'bullish'))
+    elif fcf_yield > 4:
+        mt_factors.append(('FCF Yield saludable', +3, f'FCF yield={fcf_yield:.1f}%', 'bullish'))
+    elif 0 < fcf_yield < 2:
+        mt_factors.append(('FCF Yield bajo', -3, f'FCF yield={fcf_yield:.1f}% - genera poca caja vs cap', 'bearish'))
+    elif fcf < 0 and market_cap > 0:
+        mt_factors.append(('FCF negativo', -5, 'Quema caja - depende de financiacion externa', 'bearish'))
+
+    # PEG ratio (growth at reasonable price)
+    if 0 < peg < 1:
+        mt_factors.append(('PEG atractivo', +4, f'PEG={peg:.2f} - crecimiento a buen precio', 'bullish'))
+    elif peg > 3:
+        mt_factors.append(('PEG caro', -4, f'PEG={peg:.2f} - paga mucho por el crecimiento', 'bearish'))
+    elif 1 <= peg <= 2:
+        mt_factors.append(('PEG razonable', +1, f'PEG={peg:.2f}', 'bullish'))
 
     # Liquidity mid-term risk
     if current_ratio > 0 and current_ratio < 1.0:
@@ -3522,6 +3751,19 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
             lt_factors.append(('P/E atractivo vs sector', +8, f'P/E={pe:.1f} vs sector={sector_pe} - value', 'bullish'))
         elif pe < sector_pe * 0.9:
             lt_factors.append(('P/E razonable', +4, f'P/E={pe:.1f} vs sector={sector_pe}', 'bullish'))
+        else:
+            lt_factors.append(('P/E en linea con sector', +1, f'P/E={pe:.1f} vs sector={sector_pe}', 'bullish'))
+
+    # P/B ratio (book value)
+    if pb > 0:
+        if pb < 1.5:
+            lt_factors.append(('P/B atractivo', +5, f'P/B={pb:.2f} - cotiza cerca del book value', 'bullish'))
+        elif pb < 3:
+            lt_factors.append(('P/B razonable', +2, f'P/B={pb:.2f}', 'bullish'))
+        elif pb > 8:
+            lt_factors.append(('P/B muy elevado', -5, f'P/B={pb:.2f} - prima alta sobre book', 'bearish'))
+        elif pb > 5:
+            lt_factors.append(('P/B elevado', -3, f'P/B={pb:.2f}', 'bearish'))
 
     # PEG ratio
     if peg > 0:
@@ -3559,15 +3801,29 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
     elif fcf_yield < 0:
         lt_factors.append(('FCF negativo', -7, f'FCF Yield={fcf_yield:.1f}% - quema caja', 'bearish'))
 
-    # ROE long-term
-    if roe > 25:
+    # ROE long-term — granular tiers
+    if roe >= 35:
+        lt_factors.append(('ROE clase mundial', +12, f'ROE={roe:.1f}% - moat estructural', 'bullish'))
+    elif roe >= 20:
         lt_factors.append(('ROE excepcional', +10, f'ROE={roe:.1f}% - moat potencial', 'bullish'))
-    elif roe > 15:
+    elif roe >= 12:
         lt_factors.append(('ROE bueno', +5, f'ROE={roe:.1f}%', 'bullish'))
-    elif roe < 5 and roe > 0:
+    elif roe >= 6:
+        lt_factors.append(('ROE moderado', +2, f'ROE={roe:.1f}%', 'bullish'))
+    elif 0 < roe < 6:
         lt_factors.append(('ROE bajo', -5, f'ROE={roe:.1f}%', 'bearish'))
     elif roe < 0:
         lt_factors.append(('ROE negativo', -10, f'ROE={roe:.1f}%', 'bearish'))
+
+    # ROA (asset efficiency)
+    if roa >= 15:
+        lt_factors.append(('ROA muy alto', +5, f'ROA={roa:.1f}% - excelente uso de activos', 'bullish'))
+    elif roa >= 8:
+        lt_factors.append(('ROA solido', +3, f'ROA={roa:.1f}%', 'bullish'))
+    elif 0 < roa < 2:
+        lt_factors.append(('ROA bajo', -3, f'ROA={roa:.1f}% - poca eficiencia operativa', 'bearish'))
+    elif roa < 0:
+        lt_factors.append(('ROA negativo', -5, f'ROA={roa:.1f}%', 'bearish'))
 
     # Debt long-term
     if debt_equity > 200:
@@ -3585,12 +3841,16 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
     if quick_ratio > 0 and quick_ratio < 0.5:
         lt_factors.append(('Quick ratio muy bajo', -5, f'Quick ratio={quick_ratio:.2f}', 'bearish'))
 
-    # Margins long-term
-    if profit_margin > 25:
+    # Margins long-term — granular
+    if profit_margin >= 35:
+        lt_factors.append(('Margenes clase mundial', +9, f'Margen neto={profit_margin:.1f}% - moat extremo', 'bullish'))
+    elif profit_margin > 25:
         lt_factors.append(('Margenes excepcionales', +7, f'Margen neto={profit_margin:.1f}% - pricing power', 'bullish'))
     elif profit_margin > 12:
         lt_factors.append(('Margenes buenos', +4, f'Margen neto={profit_margin:.1f}%', 'bullish'))
-    elif 0 < profit_margin < 5:
+    elif profit_margin > 5:
+        lt_factors.append(('Margenes aceptables', +2, f'Margen neto={profit_margin:.1f}%', 'bullish'))
+    elif 0 < profit_margin <= 5:
         lt_factors.append(('Margenes ajustados', -4, f'Margen neto={profit_margin:.1f}%', 'bearish'))
     elif profit_margin < 0:
         lt_factors.append(('Perdidas operativas', -8, f'Margen neto={profit_margin:.1f}%', 'bearish'))
@@ -3647,7 +3907,7 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
     def separate_factors(factors):
         bullish = sorted([f for f in factors if f[3] == 'bullish'], key=lambda x: x[1], reverse=True)
         bearish = sorted([f for f in factors if f[3] == 'bearish'], key=lambda x: x[1])
-        return bullish[:7], bearish[:7]
+        return bullish[:12], bearish[:12]
 
     st_bull, st_bear = separate_factors(st_factors)
     mt_bull, mt_bear = separate_factors(mt_factors)
