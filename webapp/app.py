@@ -3423,15 +3423,16 @@ def _show_technical_tab(ticker: str, data: dict):
             _df = _df.dropna(subset=['open', 'high', 'low', 'close'])
 
             # Format timestamps: lightweight-charts needs epoch seconds (int).
-            # yfinance may return tz-aware datetimes; strip the timezone so
-            # the int64 conversion is consistent across pandas versions.
-            _t = pd.to_datetime(_df['time'], utc=True, errors='coerce')
-            try:
-                _t = _t.dt.tz_convert(None)
-            except (AttributeError, TypeError):
-                pass
-            _df['time'] = (_t.astype('int64') // 10**9).astype('int64')
-            _df = _df.drop_duplicates(subset=['time'])  # defensive: no overlapping bars
+            # We use Timestamp.timestamp() per row which always returns float
+            # seconds-since-epoch UTC regardless of whether the datetime is
+            # tz-aware or tz-naive. astype('int64') on tz-aware datetimes
+            # is deprecated/broken on some pandas versions and was producing
+            # near-zero values, collapsing all candles to a single X position.
+            _dts = pd.to_datetime(_df['time'], errors='coerce')
+            _df['time'] = _dts.map(
+                lambda x: int(x.timestamp()) if pd.notna(x) else 0
+            ).astype('int64')
+            _df = _df[_df['time'] > 0].drop_duplicates(subset=['time']).sort_values('time').reset_index(drop=True)
 
             # SMA + Bollinger Bands
             _df['sma20'] = _df['close'].rolling(20).mean()
@@ -4341,14 +4342,13 @@ El percentil compara el valor actual vs historico del ticker para detectar extre
                 _time_col = _pdf.columns[0]
                 _pdf = _pdf.rename(columns={_time_col: 'time', 'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close'})
                 _pdf = _pdf.dropna(subset=['open', 'high', 'low', 'close'])
-                # Defensive epoch conversion (tz-aware safe)
-                _pt = pd.to_datetime(_pdf['time'], utc=True, errors='coerce')
-                try:
-                    _pt = _pt.dt.tz_convert(None)
-                except (AttributeError, TypeError):
-                    pass
-                _pdf['time'] = (_pt.astype('int64') // 10**9).astype('int64')
-                _pdf = _pdf.drop_duplicates(subset=['time'])
+                # Robust epoch conversion: Timestamp.timestamp() handles
+                # both tz-aware and tz-naive correctly.
+                _pdt = pd.to_datetime(_pdf['time'], errors='coerce')
+                _pdf['time'] = _pdt.map(
+                    lambda x: int(x.timestamp()) if pd.notna(x) else 0
+                ).astype('int64')
+                _pdf = _pdf[_pdf['time'] > 0].drop_duplicates(subset=['time']).sort_values('time').reset_index(drop=True)
                 _price_candles = _to_rec(_pdf[['time', 'open', 'high', 'low', 'close']])
 
             _base_layout = {
