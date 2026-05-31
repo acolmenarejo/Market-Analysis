@@ -1716,18 +1716,29 @@ def _svg_score_ring(score: float, size: int = 60) -> str:
 def main():
     init_session_state()
 
-    # Background cache warming — pre-load scores after dashboard loads
+    # Background cache warming — pre-load scores after dashboard loads.
+    # Uses the persistent disk cache so progress survives Streamlit restarts.
     if 'cache_warmed' not in st.session_state:
         st.session_state.cache_warmed = True
         import threading
+
         def _warm():
             import time as _t
-            _t.sleep(30)  # Wait for dashboard to finish loading first
+            _t.sleep(15)  # Let dashboard render first
             try:
-                from webapp.data.providers import warm_cache
-                warm_cache(TICKER_UNIVERSE)
+                # Warm small fast caches synchronously
+                from webapp.data.providers import (
+                    warm_cache, warm_score_cache_background,
+                )
+                warm_cache(TICKER_UNIVERSE_BY_REGION.get('US', TICKER_UNIVERSE)[:50])
+                # Score warm: US tickers first (most-used), then everything else,
+                # written progressively to the disk cache as chunks finish.
+                us_tickers = TICKER_UNIVERSE_BY_REGION.get('US', [])
+                other = [t for t in TICKER_UNIVERSE if t not in us_tickers]
+                warm_score_cache_background(us_tickers + other, chunk_size=50)
             except Exception:
                 pass
+
         threading.Thread(target=_warm, daemon=True).start()
 
     pages = [
@@ -5753,7 +5764,10 @@ def show_score_page():
     f1, f2, f3, f4 = st.columns([1.5, 1.5, 1.5, 1])
     with f1:
         all_regions = list(TICKER_UNIVERSE_BY_REGION.keys())
-        selected_regions = st.multiselect("Region", all_regions, default=all_regions, key="score_region")
+        # Default to US only — loading all 716 tickers blocks the UI for minutes.
+        # User can add more regions explicitly when needed.
+        default_regions = ['US'] if 'US' in all_regions else all_regions[:1]
+        selected_regions = st.multiselect("Region", all_regions, default=default_regions, key="score_region")
     with f2:
         all_sectors = sorted(SECTOR_MAP.keys())
         selected_sectors = st.multiselect("Sector", all_sectors, default=[], key="score_sector",
@@ -5783,27 +5797,57 @@ def show_score_page():
 
     st.caption(f"{len(filtered_tickers)} tickers selected")
 
-    # --- Session-state caching for instant page load ---
-    tickers_key = str(sorted(filtered_tickers))  # stable key
-    cache_key = f'scores_cache_{hash(tickers_key)}'
-    has_cached = cache_key in st.session_state and st.session_state[cache_key] is not None
+    # --- Persistent disk cache + progressive chunked loading ---
+    # Strategy:
+    #   1. Show ALL cached rows immediately (instant page render)
+    #   2. Identify stale/missing tickers and refresh them in chunks
+    #   3. Each chunk completion updates the table without blocking
+    from webapp.data.providers import (
+        get_cached_scores, get_stale_tickers, get_multi_horizon_scores_chunked,
+    )
 
     col_refresh, col_status = st.columns([1, 4])
     with col_refresh:
-        force_refresh = st.button("🔄 Refresh", key="score_refresh_btn", type="secondary")
+        force_refresh = st.button("🔄 Refresh", key="score_refresh_btn", type="secondary",
+                                  help="Recalcula scores stale (>12h) en chunks")
     with col_status:
-        if has_cached and not force_refresh:
-            st.caption("Showing cached scores. Click Refresh for latest data.")
+        cached_df = get_cached_scores(filtered_tickers)
+        if not cached_df.empty:
+            st.caption(f"📦 Cache: {len(cached_df)}/{len(filtered_tickers)} tickers — refrescando los stale en segundo plano")
 
-    if has_cached and not force_refresh:
-        all_scores_df = st.session_state[cache_key]
-    else:
-        with st.status(f"Computing scores for {len(filtered_tickers)} tickers...", expanded=True) as status:
-            st.write(f"Downloading price data for {len(filtered_tickers)} tickers...")
-            all_scores_df = get_all_scores_batch(tuple(filtered_tickers))
-            status.update(label=f"Scores ready — {len(all_scores_df)} tickers scored", state="complete")
-        if all_scores_df is not None and not all_scores_df.empty:
-            st.session_state[cache_key] = all_scores_df
+    # Stale list: missing from cache OR cache older than 12h
+    stale_list = get_stale_tickers(filtered_tickers) if not force_refresh else list(filtered_tickers)
+
+    # Start with whatever we have cached so user sees something instantly
+    all_scores_df = cached_df.copy() if not cached_df.empty else pd.DataFrame()
+
+    # Refresh stale tickers in chunks (with live progress updates)
+    if stale_list:
+        progress_placeholder = st.empty()
+        status_placeholder = st.empty()
+
+        def _on_chunk_done(done: int, total: int, partial: pd.DataFrame):
+            progress_placeholder.progress(done / total, text=f"Computing {done}/{total} stale tickers...")
+
+        with status_placeholder.container():
+            st.caption(f"⏳ {len(stale_list)} tickers stale — computing in chunks of 50...")
+
+        new_rows = get_multi_horizon_scores_chunked(stale_list, chunk_size=50,
+                                                    progress_callback=_on_chunk_done)
+
+        progress_placeholder.empty()
+        status_placeholder.empty()
+
+        if new_rows is not None and not new_rows.empty:
+            # Merge fresh rows over cached (fresh wins)
+            if not all_scores_df.empty:
+                all_scores_df = all_scores_df[~all_scores_df['Ticker'].isin(new_rows['Ticker'])]
+            all_scores_df = pd.concat([all_scores_df, new_rows], ignore_index=True)
+            st.success(f"✅ Computed {len(new_rows)} fresh scores · {len(all_scores_df)} total")
+
+    # Drop cache metadata columns before display
+    if 'cached_at' in all_scores_df.columns:
+        all_scores_df = all_scores_df.drop(columns=['cached_at'])
 
     if all_scores_df is None or all_scores_df.empty:
         st.warning("Could not compute scores. Try again later.")

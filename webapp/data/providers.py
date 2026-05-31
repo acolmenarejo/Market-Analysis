@@ -2088,6 +2088,126 @@ def _calc_fcf_quality(info: dict) -> float:
         return 50.0
 
 
+# =============================================================================
+# PERSISTENT SCORE CACHE (survives Streamlit restarts)
+# =============================================================================
+# Scores are expensive (716 tickers × yfinance .info + statements API calls
+# regularly hit rate limits and can take 3-5 minutes). We persist them to
+# parquet so the user sees data INSTANTLY on page load and can refresh
+# stale rows in chunks instead of blocking on a full recompute.
+
+SCORE_CACHE_FILE = ROOT_DIR / 'data' / 'score_cache.parquet'
+SCORE_CACHE_TTL_HOURS = 12  # Rows older than this are stale and worth refreshing
+
+
+def _load_score_cache() -> pd.DataFrame:
+    """Read persistent score cache from disk. Returns empty DF if missing."""
+    try:
+        if SCORE_CACHE_FILE.exists():
+            df = pd.read_parquet(SCORE_CACHE_FILE)
+            if 'cached_at' in df.columns:
+                df['cached_at'] = pd.to_datetime(df['cached_at'])
+            return df
+    except Exception as e:
+        print(f"score cache read error: {e}")
+    return pd.DataFrame()
+
+
+def _save_score_cache(new_rows: pd.DataFrame) -> None:
+    """Upsert rows into the persistent score cache (keyed by Ticker)."""
+    if new_rows is None or new_rows.empty:
+        return
+    try:
+        SCORE_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        new_rows = new_rows.copy()
+        new_rows['cached_at'] = pd.Timestamp.utcnow()
+        existing = _load_score_cache()
+        if existing.empty:
+            combined = new_rows
+        else:
+            combined = pd.concat([existing, new_rows], ignore_index=True)
+            combined = combined.drop_duplicates(subset=['Ticker'], keep='last')
+        combined.to_parquet(SCORE_CACHE_FILE, index=False)
+    except Exception as e:
+        print(f"score cache write error: {e}")
+
+
+def get_cached_scores(tickers: List[str], max_age_hours: int = SCORE_CACHE_TTL_HOURS) -> pd.DataFrame:
+    """Return cached score rows for `tickers` that are fresher than `max_age_hours`.
+
+    Used by the UI to render the table instantly without paying the recompute
+    cost. Stale or missing rows can be refreshed in the background via
+    `get_multi_horizon_scores_chunked()`.
+    """
+    cache = _load_score_cache()
+    if cache.empty:
+        return pd.DataFrame()
+    if 'cached_at' in cache.columns:
+        cutoff = pd.Timestamp.utcnow() - pd.Timedelta(hours=max_age_hours)
+        fresh = cache[cache['cached_at'] >= cutoff]
+    else:
+        fresh = cache
+    return fresh[fresh['Ticker'].isin(tickers)].copy() if 'Ticker' in fresh.columns else pd.DataFrame()
+
+
+def get_stale_tickers(tickers: List[str], max_age_hours: int = SCORE_CACHE_TTL_HOURS) -> List[str]:
+    """Return the subset of `tickers` whose cache is missing or stale."""
+    cache = _load_score_cache()
+    if cache.empty or 'Ticker' not in cache.columns:
+        return list(tickers)
+    if 'cached_at' in cache.columns:
+        cutoff = pd.Timestamp.utcnow() - pd.Timedelta(hours=max_age_hours)
+        fresh = set(cache[cache['cached_at'] >= cutoff]['Ticker'].tolist())
+    else:
+        fresh = set(cache['Ticker'].tolist())
+    return [t for t in tickers if t not in fresh]
+
+
+def get_multi_horizon_scores_chunked(tickers: List[str], chunk_size: int = 50,
+                                      progress_callback=None) -> pd.DataFrame:
+    """Compute scores in chunks, saving progress to disk after each chunk.
+
+    The signals page calls this when there are stale/missing tickers, and
+    iterates the generator-like flow via a progress callback so the table
+    updates live as chunks complete.
+
+    Args:
+        tickers: full list to score
+        chunk_size: tickers per batch (smaller = more progress updates, more overhead)
+        progress_callback: optional fn(done: int, total: int, partial_df: DataFrame)
+
+    Returns the full DataFrame of newly-scored rows. Each chunk is also
+    upserted to the persistent disk cache.
+    """
+    results_all = pd.DataFrame()
+    total = len(tickers)
+    if total == 0:
+        return results_all
+
+    for i in range(0, total, chunk_size):
+        chunk = tickers[i:i + chunk_size]
+        try:
+            # Bypass @st.cache_data to avoid blocking other chunks
+            chunk_df = get_multi_horizon_scores.__wrapped__(chunk) if hasattr(
+                get_multi_horizon_scores, '__wrapped__') else get_multi_horizon_scores(chunk)
+        except Exception as e:
+            print(f"Chunk {i}-{i+chunk_size} failed: {e}")
+            chunk_df = pd.DataFrame()
+
+        if chunk_df is not None and not chunk_df.empty:
+            _save_score_cache(chunk_df)
+            results_all = pd.concat([results_all, chunk_df], ignore_index=True)
+
+        if progress_callback is not None:
+            done = min(i + chunk_size, total)
+            try:
+                progress_callback(done, total, results_all)
+            except Exception:
+                pass
+
+    return results_all
+
+
 @st.cache_data(ttl=600, show_spinner="Computing scores...")  # 10 min
 def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
     """Calcula scores multi-horizonte para lista de tickers using batch download."""
@@ -3219,6 +3339,41 @@ def warm_cache(tickers: List[str]):
         get_all_scores_batch(tickers_tuple)
     except Exception as e:
         print(f"Cache warm-up error (non-critical): {e}")
+
+
+def warm_score_cache_background(tickers: List[str], chunk_size: int = 50) -> None:
+    """Refresh stale scores on a background daemon thread.
+
+    Non-blocking. Started by the app on first page load. Walks the universe
+    in chunks of 50, only touching tickers whose disk-cache row is missing
+    or older than 12h. Each chunk gets persisted to disk so even if the
+    thread dies mid-flight (rate limit, exception), partial progress
+    survives the next session.
+
+    Idempotent — guarded by a module-level flag so repeated reruns do not
+    spawn multiple threads.
+    """
+    import threading
+
+    global _warm_thread_started
+    try:
+        if globals().get('_warm_thread_started'):
+            return
+        globals()['_warm_thread_started'] = True
+    except Exception:
+        pass
+
+    def _worker():
+        try:
+            stale = get_stale_tickers(list(tickers))
+            if not stale:
+                return
+            # Chunk + persist — no progress callback (background)
+            get_multi_horizon_scores_chunked(stale, chunk_size=chunk_size)
+        except Exception as e:
+            print(f"Background warm-cache error (non-critical): {e}")
+
+    threading.Thread(target=_worker, daemon=True, name='score-warm-cache').start()
 
 
 # =============================================================================
