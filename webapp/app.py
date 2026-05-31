@@ -1855,6 +1855,53 @@ def _show_risk_command_center(risk_data, module_scores, crash_probs, score, regi
         <span class="section-badge" style="background:{regime_color}22; color:{regime_color};">{regime_level} · {score:.0f}/100</span>
     </div>""", unsafe_allow_html=True)
 
+    # Professional macro regime banner — drives the regime-aware scoring
+    try:
+        from webapp.data.providers import detect_macro_regime
+        macro_regime_info = detect_macro_regime()
+        _regime_colors = {
+            'easy': '#3fb950', 'tightening': '#f0883e',
+            'stagflation': '#bc8cff', 'risk_off': '#f85149', 'neutral': '#8b949e',
+        }
+        _r = macro_regime_info.get('regime', 'neutral')
+        _rc = _regime_colors.get(_r, '#8b949e')
+        _ty = macro_regime_info.get('rates_10y')
+        _rt = macro_regime_info.get('rates_trend_20d', 0)
+        _liq = macro_regime_info.get('liquidity_score', 50)
+        _curve = macro_regime_info.get('curve_slope_10_2')
+        _real = macro_regime_info.get('real_rate_proxy')
+        _cs = macro_regime_info.get('credit_stress_score', 50)
+        _signals = ' · '.join(macro_regime_info.get('signals', []))
+
+        def _fmt(v, fmt='.2f', suffix=''):
+            return f'{v:{fmt}}{suffix}' if v is not None else 'N/A'
+
+        st.markdown(f"""
+        <div style="background:linear-gradient(135deg,#161b22,{_rc}15);
+                    border:1px solid {_rc}40; border-left:4px solid {_rc};
+                    border-radius:8px; padding:10px 14px; margin:8px 0;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+                    <div>
+                        <div style="font-size:0.62rem; text-transform:uppercase; letter-spacing:0.6px; color:#8b949e; font-weight:600;">Macro Regime (Pro)</div>
+                        <div style="font-size:1.05rem; font-weight:700; color:{_rc};">{_r.upper().replace('_', ' ')}</div>
+                    </div>
+                    <div style="font-size:0.7rem; color:#c9d1d9;">
+                        10Y: <b>{_fmt(_ty, '.2f', '%')}</b>
+                        ({_rt:+.1f}% 20d) ·
+                        Curve: <b>{_fmt(_curve, '+.2f', 'pp')}</b> ·
+                        Real: <b>{_fmt(_real, '+.2f', '%')}</b> ·
+                        Credit: <b>{_cs:.0f}/100</b> ·
+                        Liq: <b>{_liq:.0f}/100</b>
+                    </div>
+                </div>
+                <div style="font-size:0.65rem; color:#8b949e; max-width:320px; text-align:right;">{_signals}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    except Exception:
+        pass
+
     # --- ROW 1: Gauge + Alerts + 30-Day Probabilities ---
     col_gauge, col_alerts_r, col_probs = st.columns([1, 1, 1])
 
@@ -4984,6 +5031,21 @@ El percentil compara el valor actual vs historico del ticker para detectar extre
 def _show_fundamental_tab(ticker: str, data: dict):
     """Fundamental analysis tab with intelligent comments and valuation models."""
     import math
+
+    # Reload button — clears caches so partial/stale data can be re-fetched
+    _col_reload, _col_hint = st.columns([1, 4])
+    with _col_reload:
+        if st.button("🔄 Recargar datos", key=f"fund_reload_{ticker}", help="Limpia caché y recarga fundamentales"):
+            get_stock_data.clear()
+            get_multi_horizon_scores.clear()
+            st.rerun()
+    with _col_hint:
+        n_na = sum(1 for k in ('roe', 'roa', 'profit_margin', 'gross_margin',
+                                'operating_margin', 'debt_to_equity', 'ev_ebitda',
+                                'total_debt', 'revenue_growth')
+                   if not data.get(k))
+        if n_na >= 5:
+            st.caption("⚠️ Varios campos N/A — Yahoo limitó endpoints profundos. Pulsa Recargar en unos segundos.")
 
     # =========================================================================
     # ROW 1: STYLED RATIO CARDS (4 columns)

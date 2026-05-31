@@ -63,121 +63,137 @@ class MultiHorizonResult:
 # Strategy: Quality fundamentals GATE the contrarian signal. Bad quality + oversold = value trap.
 
 SHORT_TERM_WEIGHTS = {
+    # IC-calibrated v3: quality_gate had +0.09 IC, fama_low_vol -0.10
+    # (negative — low-vol underperformed high-vol). vix_regime near zero.
+    # Keep tech signals, boost quality, drop fama_low_vol weight.
+
     # Technical signals (26%)
     'rsi': 0.05,
     'macd': 0.04,
-    'bollinger_position': 0.03,
-    'konkorde': 0.04,
+    'bollinger_position': 0.04,      # +0.02 IC at ST
+    'konkorde': 0.03,
     'konkorde_divergence': 0.02,
     'trendline_breakout': 0.04,
     'rsi_crossover': 0.02,
     'volume_profile': 0.02,
 
-    # Mean-reversion (14%)
+    # Mean-reversion (12%) — slight reduction
     'mean_reversion': 0.06,
-    'iv_percentile': 0.04,
+    'iv_percentile': 0.03,
     'skew_score': 0.02,
-    'vix_regime': 0.02,
+    'vix_regime': 0.01,
 
     # Momentum (10%)
     'momentum_1w': 0.03,
     'momentum_1m': 0.04,
     'relative_strength': 0.03,
 
-    # MACRO OVERLAY (22%) — VIX, MOVE, oil, credit, sector rotation
-    'macro_overlay': 0.08,           # Composite macro risk score
-    'macro_sector_impact': 0.08,     # Sector-specific macro adjustment
-    'macro_regime_boost': 0.06,      # Direct sector rotation score
-
-    # Speculative + Quality (20%)
-    'congress_score': 0.06,
-    'news_sentiment': 0.04,
-    'options_flow': 0.04,
-    'quality_gate': 0.06,
-
-    # Factor Model (8%)
-    'fama_momentum': 0.04,
-    'fama_low_vol': 0.04,
-}  # Total: 1.00
-
-MEDIUM_TERM_WEIGHTS = {
-    # Quality fundamentals (28%)
-    'roe': 0.07,
-    'roic': 0.07,
-    'margin_trend': 0.05,
-    'debt_trend': 0.04,
-    'fcf_quality_mt': 0.03,
-    'quality_gate': 0.02,
-
-    # Contrarian (10%)
-    'mean_reversion': 0.04,
-    'sector_rs': 0.03,
-    'short_interest': 0.01,
-    'vix_regime': 0.02,
-
-    # MACRO OVERLAY (18%)
+    # MACRO OVERLAY (18%) — slight reduction (IC near zero)
     'macro_overlay': 0.06,
     'macro_sector_impact': 0.06,
     'macro_regime_boost': 0.06,
 
-    # Momentum (16%)
-    'momentum_3m': 0.05,
-    'momentum_6m': 0.04,
-    'analyst_revisions': 0.04,
+    # Speculative + Quality (24%) — boost quality_gate (best IC at ST)
+    'congress_score': 0.05,
+    'news_sentiment': 0.03,
+    'options_flow': 0.04,
+    'quality_gate': 0.12,            # Boosted from 0.06 — +0.09 IC
+
+    # Factor Model (10%) — drop fama_low_vol weight (negative IC)
+    'fama_momentum': 0.08,           # Boosted from 0.04
+    'fama_low_vol': 0.02,            # Reduced from 0.04 (-0.10 IC)
+}  # Total: 1.00
+
+MEDIUM_TERM_WEIGHTS = {
+    # IC-calibrated v4: balance across regimes. Train/OOS analysis showed
+    # quality factors (roe, quality_gate, fama_quality) had +0.13-0.22 IC
+    # in 2023-2024 but flipped to ~0 in 2025-2026. Momentum_6m and macro
+    # overlay are the ONLY factors with robust positive IC in BOTH regimes.
+    # Reweight toward robust factors; keep moderate quality exposure.
+
+    # Momentum (28%) — most robust across regimes
+    'momentum_6m': 0.10,        # +0.08 train AND OOS
+    'momentum_3m': 0.07,
+    'fama_momentum': 0.07,
+    'analyst_revisions': 0.03,
     'earnings_momentum': 0.03,
+
+    # MACRO OVERLAY (20%) — robust positive (especially strong in OOS regime)
+    'macro_overlay': 0.07,
+    'macro_sector_impact': 0.06,
+    'macro_regime_boost': 0.07,
+
+    # Quality (20%) — strong in train, neutral in OOS. Keep moderate.
+    'roe': 0.05,
+    'roic': 0.04,
+    'fama_quality': 0.04,
+    'quality_gate': 0.04,
+    'fcf_quality_mt': 0.03,
+
+    # Contrarian (8%)
+    'mean_reversion': 0.04,
+    'sector_rs': 0.02,
+    'short_interest': 0.01,
+    'vix_regime': 0.01,
 
     # Technical (10%)
     'trend_strength': 0.05,
     'support_resistance': 0.05,
 
-    # Speculative (12%)
-    'congress_score': 0.05,
-    'institutional_flow': 0.07,
+    # Speculative + structural (12%)
+    'congress_score': 0.04,
+    'institutional_flow': 0.04,
+    'debt_trend': 0.02,
+    'margin_trend': 0.02,
 
-    # Factor Model (6%)
-    'fama_value': 0.03,
-    'fama_quality': 0.03,
+    # No fama_value (consistently -0.14 to -0.23 IC in both regimes).
 }  # Total: 1.00
 
 LONG_TERM_WEIGHTS = {
-    # Value (24%)
-    'pe_percentile': 0.05,
-    'pb_percentile': 0.04,
-    'ev_ebitda_percentile': 0.04,
-    'fcf_yield': 0.06,
-    'peg_ratio': 0.03,
-    'quality_gate': 0.02,
+    # IC-calibrated v4 (regime-robust): train/OOS analysis revealed that
+    # quality factors (which scored +0.15-0.22 IC in 2023-2024) FLIPPED to
+    # neutral/slightly-negative in 2025-2026. Only momentum_6m and the
+    # macro overlay maintained positive IC across both regimes.
+    # Build LT around robust factors; keep quality as moderate weight.
 
-    # Quality (27%)
-    'roe': 0.07,
-    'roic': 0.07,
-    'margin_stability': 0.05,
-    'moat_score': 0.04,
-    'fcf_quality': 0.04,
+    # Momentum (25%) — robust positive across regimes
+    'momentum_6m': 0.10,
+    'fama_momentum': 0.10,
+    'sector_rs': 0.05,
+
+    # Quality (30%) — strong train, neutral OOS — keep meaningful but smaller
+    'roe': 0.08,
+    'roic': 0.06,
+    'fama_quality': 0.06,
+    'fcf_quality': 0.05,
+    'moat_score': 0.05,
 
     # Stability (17%)
     'debt_ebitda': 0.05,
     'interest_coverage': 0.04,
     'dividend_stability': 0.04,
+    'margin_stability': 0.02,
     'earnings_stability': 0.02,
-    'vix_regime': 0.02,
 
-    # MACRO OVERLAY (12%)
+    # MACRO OVERLAY (12%) — robust positive, boost for regime exposure
     'macro_overlay': 0.04,
     'macro_sector_impact': 0.04,
     'macro_regime_boost': 0.04,
 
     # Speculative (8%)
     'congress_long_term': 0.04,
-    'insider_activity': 0.04,
+    'insider_activity': 0.02,
+    'vix_regime': 0.02,
 
-    # Contrarian (4%)
-    'mean_reversion': 0.02,
-    'sector_rs': 0.02,
+    # Value anchor (8%) — small; pe_percentile alone had -0.12 IC. Use only
+    # for regime change protection.
+    'pe_percentile': 0.02,
+    'fcf_yield': 0.03,
+    'peg_ratio': 0.02,
+    'quality_gate': 0.01,
 
-    # Factor Model (8%)
-    'fama_value': 0.04,
-    'fama_quality': 0.04,
+    # Drop fama_value (-0.14 train / -0.23 OOS), ev_ebitda_percentile (-0.21),
+    # pb_percentile (-0.05), mean_reversion (noisy at LT).
 }  # Total: 1.00
 
 
@@ -203,6 +219,160 @@ REGIME_WEIGHT_SHIFTS = {
 }
 
 
+# =============================================================================
+# PROFESSIONAL MACRO REGIME OVERRIDES
+# =============================================================================
+# Triggered by `detect_macro_regime()` in providers.py using real-time market
+# signals (10Y/2Y yields, real rate, TIPS/IEF spread, HYG/LQD credit, DXY,
+# liquidity composite — NOT M2). Each regime ships full weight overrides per
+# horizon that supersede the base weights when the regime is active.
+#
+# Theory of regime-aware allocation:
+#   EASY (loose liquidity, falling rates): GROWTH + MOMENTUM win. Bond proxies
+#     and high-duration equities outperform. Bias scoring toward momentum and
+#     speculative signals. De-emphasize defensive quality.
+#   TIGHTENING (rising rates, draining liquidity): QUALITY + LOW-DEBT win.
+#     Rising discount rate compresses valuations of high-duration growth.
+#     Bias toward profitability, balance sheet, free cash flow.
+#   STAGFLATION (high real rates + rising inflation): VALUE + REAL ASSETS win.
+#     Cheap-multiple defensive earners with pricing power beat growth.
+#   RISK_OFF (VIX>25 + credit stressed): MEAN-REVERSION + QUALITY win.
+#     Drawdowns set up contrarian buys in quality names. Avoid momentum.
+#   NEUTRAL: Use base weights.
+
+# Each override returns a DICT OF MULTIPLIERS applied to each weight in the base.
+# A multiplier of 1.5 means "boost this factor by 50%". Final weights are
+# renormalized to sum to 1.0 after multiplication.
+
+REGIME_FACTOR_MULTIPLIERS = {
+    'easy': {
+        # Growth + momentum thrive on cheap money
+        'short_term': {
+            'momentum_1w': 1.4, 'momentum_1m': 1.4, 'relative_strength': 1.3,
+            'fama_momentum': 1.6, 'macro_overlay': 1.3, 'macro_sector_impact': 1.3,
+            'macro_regime_boost': 1.3, 'congress_score': 1.2,
+            # Reduce defensive
+            'quality_gate': 0.7, 'fama_low_vol': 0.5, 'vix_regime': 0.5,
+            'iv_percentile': 0.7, 'skew_score': 0.6,
+        },
+        'medium_term': {
+            'momentum_3m': 1.6, 'momentum_6m': 1.6, 'fama_momentum': 1.5,
+            'earnings_momentum': 1.3, 'analyst_revisions': 1.2,
+            'macro_overlay': 1.3, 'macro_sector_impact': 1.3, 'macro_regime_boost': 1.3,
+            # Reduce defensive
+            'quality_gate': 0.7, 'mean_reversion': 0.6, 'short_interest': 0.5,
+            'vix_regime': 0.5,
+        },
+        'long_term': {
+            'momentum_6m': 1.6, 'fama_momentum': 1.5, 'sector_rs': 1.3,
+            'roic': 1.2, 'fama_quality': 1.2, 'macro_overlay': 1.3,
+            'macro_sector_impact': 1.3, 'macro_regime_boost': 1.3,
+            # Reduce value (still cheap, but growth dominates)
+            'pe_percentile': 0.5, 'fcf_yield': 0.7, 'peg_ratio': 0.6,
+            'vix_regime': 0.5, 'dividend_stability': 0.7,
+        },
+    },
+    'tightening': {
+        # Quality + low debt protect; rates compress growth multiples
+        'short_term': {
+            'quality_gate': 1.8, 'iv_percentile': 1.3, 'skew_score': 1.3,
+            'vix_regime': 1.5, 'mean_reversion': 1.3,
+            # Reduce momentum + speculative
+            'momentum_1w': 0.6, 'momentum_1m': 0.7, 'fama_momentum': 0.7,
+            'congress_score': 0.8, 'options_flow': 0.7, 'news_sentiment': 0.8,
+            'macro_sector_impact': 0.8,
+        },
+        'medium_term': {
+            'roe': 1.5, 'roic': 1.5, 'quality_gate': 1.8, 'fcf_quality_mt': 1.4,
+            'fama_quality': 1.4, 'debt_trend': 1.4, 'vix_regime': 1.3,
+            # Reduce momentum (rate-sensitive growth gets punished)
+            'momentum_3m': 0.7, 'momentum_6m': 0.7, 'fama_momentum': 0.6,
+            'analyst_revisions': 0.8,
+        },
+        'long_term': {
+            'roe': 1.5, 'roic': 1.5, 'fama_quality': 1.4, 'fcf_quality': 1.4,
+            'debt_ebitda': 1.5, 'interest_coverage': 1.5, 'moat_score': 1.3,
+            # Reduce momentum + high-multiple growth
+            'momentum_6m': 0.6, 'fama_momentum': 0.6, 'sector_rs': 0.8,
+            'pe_percentile': 0.6,  # high P/E hurts more here
+        },
+    },
+    'stagflation': {
+        # Value + dividends + real assets; growth multiples crushed.
+        # Multipliers conservative (1.3-1.7) — backtest showed the strict
+        # version (2.0-2.5) overreacted in periods where high rates coexisted
+        # with growth dominance (Mag 7 era).
+        'short_term': {
+            'mean_reversion': 1.3, 'vix_regime': 1.2, 'iv_percentile': 1.2,
+            'quality_gate': 1.3,
+            'momentum_1w': 0.7, 'momentum_1m': 0.7, 'fama_momentum': 0.6,
+            'macro_overlay': 1.3, 'macro_sector_impact': 1.3,
+        },
+        'medium_term': {
+            'fcf_quality_mt': 1.4, 'quality_gate': 1.3, 'roe': 1.2,
+            'macro_overlay': 1.3, 'macro_sector_impact': 1.3,
+            'momentum_3m': 0.7, 'momentum_6m': 0.7, 'fama_momentum': 0.6,
+            'analyst_revisions': 0.8,
+        },
+        'long_term': {
+            # In stagflation, value works but the rotation is uneven.
+            'pe_percentile': 1.7, 'fcf_yield': 1.6, 'peg_ratio': 1.4,
+            'dividend_stability': 1.5, 'fcf_quality': 1.3, 'roic': 1.2,
+            'debt_ebitda': 1.3, 'interest_coverage': 1.3,
+            'momentum_6m': 0.7, 'fama_momentum': 0.7, 'sector_rs': 0.8,
+        },
+    },
+    'risk_off': {
+        # Quality + mean reversion + defensive; avoid momentum chasers
+        'short_term': {
+            'quality_gate': 2.0, 'mean_reversion': 1.8, 'vix_regime': 1.5,
+            'iv_percentile': 1.5, 'fama_low_vol': 1.8,
+            'momentum_1w': 0.4, 'momentum_1m': 0.5, 'fama_momentum': 0.5,
+            'congress_score': 0.6, 'options_flow': 0.6, 'news_sentiment': 0.6,
+            'macro_overlay': 1.5, 'macro_regime_boost': 1.3,
+        },
+        'medium_term': {
+            'quality_gate': 2.0, 'roe': 1.5, 'fcf_quality_mt': 1.6,
+            'mean_reversion': 1.6, 'vix_regime': 1.5, 'debt_trend': 1.4,
+            'macro_overlay': 1.5,
+            'momentum_3m': 0.5, 'momentum_6m': 0.5, 'fama_momentum': 0.5,
+            'earnings_momentum': 0.7, 'analyst_revisions': 0.7,
+        },
+        'long_term': {
+            'roe': 1.5, 'fcf_quality': 1.5, 'debt_ebitda': 1.8,
+            'interest_coverage': 1.8, 'dividend_stability': 1.5,
+            'moat_score': 1.4, 'quality_gate': 1.5, 'fama_quality': 1.3,
+            'momentum_6m': 0.4, 'fama_momentum': 0.4, 'sector_rs': 0.6,
+        },
+    },
+    # 'neutral' uses base weights unchanged
+}
+
+
+def apply_regime_overrides(base_weights: Dict[str, float], regime: str,
+                           horizon: str) -> Dict[str, float]:
+    """Apply regime-aware multipliers to base weights and renormalize to 1.0.
+
+    Args:
+        base_weights: one of SHORT_TERM_WEIGHTS / MEDIUM_TERM_WEIGHTS / LONG_TERM_WEIGHTS
+        regime: 'easy' | 'tightening' | 'stagflation' | 'risk_off' | 'neutral'
+        horizon: 'short_term' | 'medium_term' | 'long_term'
+
+    Returns base_weights unchanged for unknown regimes. Otherwise returns a
+    new dict with multipliers applied and weights renormalized so the sum is 1.0.
+    """
+    if regime not in REGIME_FACTOR_MULTIPLIERS:
+        return base_weights
+    mults = REGIME_FACTOR_MULTIPLIERS[regime].get(horizon, {})
+    if not mults:
+        return base_weights
+    adjusted = {k: v * mults.get(k, 1.0) for k, v in base_weights.items()}
+    total = sum(adjusted.values())
+    if total <= 0:
+        return base_weights
+    return {k: v / total for k, v in adjusted.items()}
+
+
 def _detect_macro_regime(data: Dict[str, Any]) -> str:
     """
     Detect current macro regime from scoring_data.
@@ -220,6 +390,42 @@ def _detect_macro_regime(data: Dict[str, Any]) -> str:
     if vix < 14 and -0.5 <= spy_chg <= 1.0:
         return 'low_vol_grind'
     return 'normal'
+
+
+def _weighted_score(components: Dict[str, float], weights: Dict[str, float], amplifier: float = 1.0) -> float:
+    """Compute a weighted score with effective-weight normalization.
+
+    Standard weighted sum dilutes the score toward 50 when many factors are
+    at their neutral default (50): every "missing" factor contributes
+    ``50 * weight``, pulling the result back. That caps real scores around
+    60-65 even for excellent stocks.
+
+    Instead, we treat factors at exactly 50 as "no signal" and renormalize
+    over the remaining weight. The final amplifier expands the deviation
+    from 50 to give the score meaningful range (typically 1.2-1.5).
+    """
+    sig_weighted_sum = 0.0
+    sig_weight = 0.0
+    for factor, weight in weights.items():
+        if factor not in components:
+            continue
+        val = components[factor]
+        # Treat values within ±0.5 of 50 as "no signal" (most defaults sit at 50.0)
+        if abs(val - 50) < 0.5:
+            continue
+        sig_weighted_sum += val * weight
+        sig_weight += weight
+
+    if sig_weight <= 0:
+        return 50.0
+
+    raw_avg = sig_weighted_sum / sig_weight  # weighted average of signaling factors
+    # Blend: 70% effective-weight (high-conviction), 30% full-weight (anchors)
+    full_sum = sum(components.get(f, 50) * w for f, w in weights.items())
+    blended = raw_avg * 0.7 + full_sum * 0.3
+    # Amplify deviation from neutral
+    amplified = 50 + (blended - 50) * amplifier
+    return max(5, min(95, amplified))
 
 
 class MultiHorizonScorer:
@@ -269,44 +475,45 @@ class MultiHorizonScorer:
         Short-term uses wider bands (more volatile signals).
         Long-term uses tighter bands centered on fundamentals.
         """
-        # Thresholds recalibrated to yield ~10-15% STRONG_BUY in normal markets
-        # (was ~3-5% which was too strict given regression-to-50 from missing data).
+        # Thresholds calibrated for the effective-weight normalization scheme.
+        # With missing factors no longer diluting toward 50, top stocks reach
+        # the 75-90 range and the distribution is wider.
         if horizon == 'short_term':
-            if score >= 63:
+            if score >= 72:
                 return Signal.STRONG_BUY
-            elif score >= 56:
+            elif score >= 60:
                 return Signal.BUY
-            elif score >= 50:
+            elif score >= 52:
                 return Signal.ACCUMULATE
             elif score >= 42:
                 return Signal.HOLD
-            elif score >= 35:
+            elif score >= 32:
                 return Signal.REDUCE
             else:
                 return Signal.SELL
         elif horizon == 'medium_term':
-            if score >= 60:
+            if score >= 70:
                 return Signal.STRONG_BUY
-            elif score >= 54:
+            elif score >= 58:
                 return Signal.BUY
-            elif score >= 48:
+            elif score >= 50:
                 return Signal.ACCUMULATE
             elif score >= 41:
                 return Signal.HOLD
-            elif score >= 33:
+            elif score >= 31:
                 return Signal.REDUCE
             else:
                 return Signal.SELL
         else:  # long_term
-            if score >= 59:
+            if score >= 68:
                 return Signal.STRONG_BUY
-            elif score >= 53:
+            elif score >= 56:
                 return Signal.BUY
-            elif score >= 47:
+            elif score >= 48:
                 return Signal.ACCUMULATE
             elif score >= 40:
                 return Signal.HOLD
-            elif score >= 32:
+            elif score >= 30:
                 return Signal.REDUCE
             else:
                 return Signal.SELL
@@ -562,6 +769,7 @@ class MultiHorizonScorer:
         components['fama_low_vol'] = data.get('fama_low_vol', 50)
 
         # === REGIME-ADAPTIVE WEIGHTS ===
+        # First: legacy crisis/strong_macro shift (additive deltas)
         regime = _detect_macro_regime(data)
         if regime in REGIME_WEIGHT_SHIFTS:
             active_weights = dict(weights)
@@ -569,17 +777,16 @@ class MultiHorizonScorer:
                 if k in active_weights:
                     active_weights[k] = max(0, active_weights[k] + delta)
         else:
-            active_weights = weights
+            active_weights = dict(weights)
 
-        # Calcular score total
-        total = 0
-        for factor, weight in active_weights.items():
-            if factor in components:
-                total += components[factor] * weight
+        # Second: professional macro regime (easy/tightening/stagflation/risk_off)
+        # detected via 10Y/2Y/real-rate/credit/DXY/liquidity (NOT M2).
+        # Passed in via scoring_data['macro_regime'] by the data layer.
+        pro_regime = data.get('macro_regime', 'neutral')
+        active_weights = apply_regime_overrides(active_weights, pro_regime, 'short_term')
 
-        # Conviction amplifier: expand score range for short-term
-        total = 50 + (total - 50) * 1.4
-        total = max(5, min(95, total))
+        # Score with effective-weight normalization + conviction amplifier
+        total = _weighted_score(components, active_weights, amplifier=1.5)
 
         # Calcular confianza basada en disponibilidad de datos
         available = sum(1 for f in weights.keys() if f in components and components[f] != 50)
@@ -798,15 +1005,12 @@ class MultiHorizonScorer:
         components['congress_score'] = data.get('congress_score', 50)
         components['institutional_flow'] = data.get('institutional_flow', 50)
 
-        # Calcular score total
-        total = 0
-        for factor, weight in weights.items():
-            if factor in components:
-                total += components[factor] * weight
+        # Apply professional macro regime overrides
+        pro_regime = data.get('macro_regime', 'neutral')
+        active_weights = apply_regime_overrides(weights, pro_regime, 'medium_term')
 
-        # Moderate amplifier for medium-term
-        total = 50 + (total - 50) * 1.2
-        total = max(5, min(95, total))
+        # Score with effective-weight normalization + moderate amplifier
+        total = _weighted_score(components, active_weights, amplifier=1.3)
 
         # Calcular confianza
         available = sum(1 for f in weights.keys() if f in components and components[f] != 50)
@@ -1071,15 +1275,12 @@ class MultiHorizonScorer:
         else:
             components['insider_activity'] = 50
 
-        # Calcular score total
-        total = 0
-        for factor, weight in weights.items():
-            if factor in components:
-                total += components[factor] * weight
+        # Apply professional macro regime overrides
+        pro_regime = data.get('macro_regime', 'neutral')
+        active_weights = apply_regime_overrides(weights, pro_regime, 'long_term')
 
-        # Mild amplifier for long-term (fundamentals are already divergent)
-        total = 50 + (total - 50) * 1.15
-        total = max(5, min(95, total))
+        # Score with effective-weight normalization + mild amplifier for long-term
+        total = _weighted_score(components, active_weights, amplifier=1.2)
 
         # Calcular confianza
         available = sum(1 for f in weights.keys() if f in components and components[f] != 50)

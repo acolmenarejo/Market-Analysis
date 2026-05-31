@@ -3,7 +3,16 @@
     "allow": [
       "Bash(python:*)",
       "Bash(ls:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(test -f \"d:/proyectos/Market Analysis/.env\")",
+      "Read(//d/proyectos/**)",
+      "Bash(python3 -c \":*)",
+      "Bash(sort -t= -k2 -n)",
+      "Bash(xargs grep -l \"get_all_scores_batch\")",
+      "Bash(python3)",
+      "Read(//tmp/**)",
+      "Read(//elif sector == .Telecom|elif sector == .Industrials/**)",
+      "Bash(git add *)"
     ]
   }
 }

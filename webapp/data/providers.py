@@ -483,6 +483,36 @@ def _get_fallback_congress_data() -> pd.DataFrame:
     return pd.DataFrame(columns=columns)
 
 
+def _decimal_to_pct(value) -> float:
+    """Convert a decimal fraction (0.24) to percent (24.0). Safe on None/0."""
+    if value is None:
+        return 0.0
+    try:
+        return float(value) * 100
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _yield_field(value) -> float:
+    """Normalize a dividend-yield-style field to plain percent.
+
+    yfinance 1.0 returns ``dividendYield`` already in percent (e.g. 0.82 for
+    0.82%) while pre-1.0 returned decimal (0.0082). Heuristic: if the absolute
+    value is below 0.15 it's the legacy decimal form (15% as decimal = 0.15,
+    but no dividend stock yields > 15% as percent either, so 0.15 is the
+    natural break). Above that, treat as percent already.
+    """
+    if value is None:
+        return 0.0
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if v == 0:
+        return 0.0
+    return v if abs(v) >= 0.15 else v * 100
+
+
 def _yf_retry(fn, retries=4, base_delay=1.5, return_on_fail=None):
     """Execute a yfinance call with exponential backoff on rate limit.
 
@@ -683,6 +713,19 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
         if info is None:
             info = {}
 
+        # yfinance .info can come back partial when deeper Yahoo endpoints
+        # are throttled (basic price OK, fundamentals missing). Retry once
+        # with a short delay; if still partial, supplement from the
+        # statements API which sits behind a different rate limiter.
+        if _info_is_partial(info):
+            import time as _t
+            _t.sleep(1.5)
+            _retry_info = _yf_retry(lambda: stock.info)
+            if _retry_info is not None and _retry_info.get('returnOnEquity') is not None:
+                info = _retry_info
+        if _info_is_partial(info):
+            info = _supplement_from_statements(ticker, info)
+
         # Calcular métricas técnicas básicas
         if not hist.empty:
             close = hist['Close']
@@ -790,18 +833,18 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
             'forward_pe': info.get('forwardPE', 0),
             'ps_ratio': info.get('priceToSalesTrailing12Months', 0),
             'pb_ratio': info.get('priceToBook', 0),
-            'roe': info.get('returnOnEquity', 0) * 100 if info.get('returnOnEquity') else 0,
-            'roa': info.get('returnOnAssets', 0) * 100 if info.get('returnOnAssets') else 0,
-            'profit_margin': info.get('profitMargins', 0) * 100 if info.get('profitMargins') else 0,
-            'operating_margin': info.get('operatingMargins', 0) * 100 if info.get('operatingMargins') else 0,
-            'gross_margin': info.get('grossMargins', 0) * 100 if info.get('grossMargins') else 0,
+            'roe': _decimal_to_pct(info.get('returnOnEquity')),
+            'roa': _decimal_to_pct(info.get('returnOnAssets')),
+            'profit_margin': _decimal_to_pct(info.get('profitMargins')),
+            'operating_margin': _decimal_to_pct(info.get('operatingMargins')),
+            'gross_margin': _decimal_to_pct(info.get('grossMargins')),
             'debt_to_equity': info.get('debtToEquity', 0),
             'current_ratio': info.get('currentRatio', 0),
             'quick_ratio': info.get('quickRatio', 0),
             'market_cap': info.get('marketCap', 0),
             'enterprise_value': info.get('enterpriseValue', 0),
             'ev_ebitda': info.get('enterpriseToEbitda', 0),
-            'dividend_yield': info.get('dividendYield', 0) * 100 if info.get('dividendYield') else 0,
+            'dividend_yield': _yield_field(info.get('dividendYield')),
 
             # Meta
             'company_name': info.get('longName', info.get('shortName', ticker)),
@@ -820,8 +863,8 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
             'earnings_date': info.get('earningsDate', [None])[0] if info.get('earningsDate') else None,
 
             # Institutional & Analyst
-            'institutional_ownership': info.get('heldPercentInstitutions', 0) * 100 if info.get('heldPercentInstitutions') else 0,
-            'insider_ownership': info.get('heldPercentInsiders', 0) * 100 if info.get('heldPercentInsiders') else 0,
+            'institutional_ownership': _decimal_to_pct(info.get('heldPercentInstitutions')),
+            'insider_ownership': _decimal_to_pct(info.get('heldPercentInsiders')),
             'target_price': info.get('targetMeanPrice', 0),
             'target_high': info.get('targetHighPrice', 0),
             'target_low': info.get('targetLowPrice', 0),
@@ -830,8 +873,8 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
 
             # Additional financials
             'revenue': info.get('totalRevenue', 0),
-            'revenue_growth': info.get('revenueGrowth', 0) * 100 if info.get('revenueGrowth') else 0,
-            'earnings_growth': info.get('earningsGrowth', 0) * 100 if info.get('earningsGrowth') else 0,
+            'revenue_growth': _decimal_to_pct(info.get('revenueGrowth')),
+            'earnings_growth': _decimal_to_pct(info.get('earningsGrowth')),
             'free_cash_flow': info.get('freeCashflow', 0),
             'beta': info.get('beta', 1),
             '52w_high': info.get('fiftyTwoWeekHigh', 0),
@@ -845,7 +888,7 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
             'trailing_eps': info.get('trailingEps', 0),
             'forward_eps': info.get('forwardEps', 0),
             'revenue_per_share': info.get('revenuePerShare', 0),
-            'earnings_quarterly_growth': info.get('earningsQuarterlyGrowth', 0) * 100 if info.get('earningsQuarterlyGrowth') else 0,
+            'earnings_quarterly_growth': _decimal_to_pct(info.get('earningsQuarterlyGrowth')),
             'peg_ratio': info.get('pegRatio', 0),
             'ev_revenue': info.get('enterpriseToRevenue', 0),
             'shares_outstanding': info.get('sharesOutstanding', 0),
@@ -922,16 +965,96 @@ def _batch_download_prices(tickers: List[str]) -> dict:
     return all_hist_data
 
 
+def _info_is_partial(info: dict) -> bool:
+    """Return True if a yfinance info dict has basic but no deep fundamentals."""
+    if not info:
+        return False
+    return (
+        info.get('trailingPE') is not None
+        and info.get('returnOnEquity') is None
+        and info.get('profitMargins') is None
+        and info.get('totalRevenue') is None
+    )
+
+
+def _supplement_from_statements(ticker: str, info: dict) -> dict:
+    """Patch missing fundamentals using stock.income_stmt / balance_sheet / cashflow.
+
+    Used as a fallback when yfinance's .info endpoint returns a partial dict
+    (the deeper key_statistics / financial_data subqueries got rate limited).
+    The statements API often works even when .info is throttled.
+    """
+    info = dict(info)
+    try:
+        stock = yf.Ticker(ticker)
+        _income = _yf_retry(lambda: stock.income_stmt)
+        _bs = _yf_retry(lambda: stock.balance_sheet)
+        _cf = _yf_retry(lambda: stock.cashflow)
+        _net_income = None
+        if _income is not None and not _income.empty:
+            _col = _income.columns[0]
+            _net_income = _income.loc['Net Income', _col] if 'Net Income' in _income.index else None
+            _revenue = _income.loc['Total Revenue', _col] if 'Total Revenue' in _income.index else None
+            _gross = _income.loc['Gross Profit', _col] if 'Gross Profit' in _income.index else None
+            _op_inc = _income.loc['Operating Income', _col] if 'Operating Income' in _income.index else None
+            _ebitda_v = _income.loc['EBITDA', _col] if 'EBITDA' in _income.index else None
+            if _revenue and _revenue > 0:
+                if _net_income is not None and info.get('profitMargins') is None:
+                    info['profitMargins'] = float(_net_income / _revenue)
+                if _gross is not None and info.get('grossMargins') is None:
+                    info['grossMargins'] = float(_gross / _revenue)
+                if _op_inc is not None and info.get('operatingMargins') is None:
+                    info['operatingMargins'] = float(_op_inc / _revenue)
+                if info.get('totalRevenue') is None:
+                    info['totalRevenue'] = float(_revenue)
+            if _ebitda_v is not None and info.get('ebitda') is None:
+                info['ebitda'] = float(_ebitda_v)
+        if _bs is not None and not _bs.empty:
+            _col = _bs.columns[0]
+            _equity = _bs.loc['Stockholders Equity', _col] if 'Stockholders Equity' in _bs.index else None
+            _assets = _bs.loc['Total Assets', _col] if 'Total Assets' in _bs.index else None
+            _debt = _bs.loc['Total Debt', _col] if 'Total Debt' in _bs.index else None
+            _cash = _bs.loc['Cash And Cash Equivalents', _col] if 'Cash And Cash Equivalents' in _bs.index else None
+            _curr_assets = _bs.loc['Current Assets', _col] if 'Current Assets' in _bs.index else None
+            _curr_liab = _bs.loc['Current Liabilities', _col] if 'Current Liabilities' in _bs.index else None
+            if _equity and _equity > 0:
+                if _net_income is not None and info.get('returnOnEquity') is None:
+                    info['returnOnEquity'] = float(_net_income / _equity)
+                if _debt is not None and info.get('debtToEquity') is None:
+                    info['debtToEquity'] = float(_debt / _equity * 100)
+            if _assets and _assets > 0 and _net_income is not None and info.get('returnOnAssets') is None:
+                info['returnOnAssets'] = float(_net_income / _assets)
+            if _curr_liab and _curr_liab > 0 and _curr_assets is not None and info.get('currentRatio') is None:
+                info['currentRatio'] = float(_curr_assets / _curr_liab)
+            if _debt is not None and info.get('totalDebt') is None:
+                info['totalDebt'] = float(_debt)
+            if _cash is not None and info.get('totalCash') is None:
+                info['totalCash'] = float(_cash)
+        if _cf is not None and not _cf.empty:
+            _col = _cf.columns[0]
+            _fcf_v = _cf.loc['Free Cash Flow', _col] if 'Free Cash Flow' in _cf.index else None
+            if _fcf_v is not None and info.get('freeCashflow') is None:
+                info['freeCashflow'] = float(_fcf_v)
+    except Exception:
+        pass
+    return info
+
+
 def _batch_download_info(tickers: List[str]) -> dict:
-    """Download fundamental info for all tickers using thread pool."""
+    """Download fundamental info for all tickers using thread pool.
+
+    Includes per-ticker retry and a statements-API fallback when .info comes
+    back partial (deeper Yahoo endpoints throttled). The fallback is rate-limited
+    to a small number of tickers per batch to avoid making the throttle worse.
+    """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     all_info = {}
 
     def _fetch_info(t):
         try:
-            info = yf.Ticker(t).info
-            return t, info if info else {}
+            info = _yf_retry(lambda: yf.Ticker(t).info) or {}
+            return t, info
         except Exception:
             return t, {}
 
@@ -943,6 +1066,12 @@ def _batch_download_info(tickers: List[str]) -> dict:
                 all_info[ticker] = info
             except Exception:
                 all_info[futures[future]] = {}
+
+    # Identify partial fetches and supplement from statements API (sequential,
+    # capped at 30 to avoid blowing up batch time when many tickers are stale).
+    partial_tickers = [t for t, info in all_info.items() if _info_is_partial(info)][:30]
+    for t in partial_tickers:
+        all_info[t] = _supplement_from_statements(t, all_info[t])
 
     return all_info
 
@@ -1426,8 +1555,11 @@ def _compute_cross_sectional_factors(tickers: List[str], all_info_data: Dict,
         quality_vals[t] = roe * 0.6 + gm * 0.4
 
     def _to_percentile(vals, higher_is_better=True):
-        if not vals:
-            return {}
+        # Need >=5 samples for a meaningful percentile rank.
+        # With fewer tickers, return neutral 50 for everyone so single-ticker
+        # calls don't get penalized to 0.
+        if not vals or len(vals) < 5:
+            return {t: 50 for t in vals}
         sorted_items = sorted(vals.items(), key=lambda x: x[1])
         n = len(sorted_items)
         result = {}
@@ -1445,6 +1577,22 @@ def _compute_cross_sectional_factors(tickers: List[str], all_info_data: Dict,
         }
         for t in tickers
     }
+
+
+def _get_universe_cross_sectional() -> Dict[str, Dict[str, float]]:
+    """Return cached universe-wide cross-sectional ranking, if available.
+
+    Populated lazily by ``get_multi_horizon_scores`` when called with the full
+    ticker universe (or any batch of 20+ tickers). Single-ticker calls then
+    reuse this ranking so the signals table and the per-stock trade page show
+    the SAME score — without paying the cost of redownloading 700+ tickers.
+    Returns {} if no batch has populated it yet; in that case single-ticker
+    callers fall back to neutral 50 for Fama factors.
+    """
+    try:
+        return st.session_state.get('_cs_universe_cache', {})
+    except Exception:
+        return {}
 
 
 @st.cache_data(ttl=300)
@@ -1709,6 +1857,215 @@ def _calc_sector_relative_strength(ticker_momentum_3m: float, sector: str,
         return 50.0
 
 
+@st.cache_data(ttl=900)  # 15 min — these data don't move fast
+def detect_macro_regime() -> Dict[str, Any]:
+    """Detect the current macro regime from professional market signals.
+
+    Inputs (all from yfinance, no FRED/M2 required):
+      ^TNX : 10-year Treasury yield (nominal)
+      ^IRX : 13-week T-bill yield (short rate proxy)
+      ^FVX : 5-year Treasury yield
+      TIP  : TIPS ETF — real yield exposure
+      IEF  : 7-10Y Treasury — duration peer to ^TNX
+      HYG  : High-yield credit ETF
+      LQD  : IG corporate ETF
+      TLT  : Long-duration Treasury
+      DXY proxy via DX-Y.NYB or UUP
+      ^VIX : Equity volatility
+      GLD  : Gold (inflation hedge)
+      USO  : Oil (inflation/commodity)
+
+    Derived signals (the ones used in pro shops):
+      real_rate       = 10Y nominal - 5y5y breakeven proxy (from TIP/IEF spread)
+      curve_slope_10_2 = 10Y - 2Y proxy (^TNX - ^IRX  on short end ~2Y proxy)
+      credit_spread   = -HYG_chg + LQD_chg  (HYG widening relative to LQD)
+      liquidity_score = composite (dollar weak + credit tight in + curve steepening)
+      dxy_trend       = 20d DXY change
+      inflation_proxy = (GLD + USO) 20d change vs SPY
+      rates_trend     = 20d ^TNX change
+
+    Regimes:
+      EASY        : rates falling, credit tight (spreads narrow), DXY weak, low VIX
+      TIGHTENING  : rates rising, credit slowly widening, neutral-firm DXY, rising VIX
+      STAGFLATION : rates high AND inflation-proxy rising AND oil/gold rising
+      RISK_OFF    : VIX > 25, HYG dropping > 1%, credit widening fast
+      NEUTRAL     : none of the above
+    """
+    out = {
+        'regime': 'neutral',
+        'liquidity_score': 50.0,
+        'rates_10y': None, 'rates_2y_proxy': None,
+        'curve_slope_10_2': None, 'rates_trend_20d': 0.0,
+        'real_rate_proxy': None, 'inflation_proxy_20d': 0.0,
+        'credit_stress_score': 50.0, 'dxy_trend_20d': 0.0,
+        'signals': [],
+    }
+    try:
+        tickers = ['^TNX', '^IRX', '^FVX', 'TIP', 'IEF', 'HYG', 'LQD',
+                   'TLT', 'DX-Y.NYB', '^VIX', 'GLD', 'USO', 'SPY']
+        data = yf.download(tickers, period='3mo', group_by='ticker',
+                           auto_adjust=True, threads=True, progress=False)
+
+        def _series(sym: str):
+            try:
+                if data.columns.nlevels > 1 and sym in data.columns.get_level_values(0):
+                    df = data[sym].dropna(how='all')
+                elif data.columns.nlevels == 1:
+                    df = data
+                else:
+                    return None
+                if df.empty or 'Close' not in df.columns:
+                    return None
+                return df['Close'].dropna()
+            except Exception:
+                return None
+
+        tnx = _series('^TNX')   # 10Y yield (already %)
+        irx = _series('^IRX')   # 13w T-bill yield (short rate proxy)
+        fvx = _series('^FVX')   # 5Y yield
+        tip = _series('TIP')
+        ief = _series('IEF')
+        hyg = _series('HYG')
+        lqd = _series('LQD')
+        tlt = _series('TLT')
+        dxy = _series('DX-Y.NYB')
+        vix = _series('^VIX')
+        gld = _series('GLD')
+        uso = _series('USO')
+        spy = _series('SPY')
+
+        def _last(s):
+            return float(s.iloc[-1]) if s is not None and len(s) >= 1 else None
+
+        def _pct_chg(s, n=20):
+            if s is None or len(s) <= n:
+                return 0.0
+            return float((s.iloc[-1] / s.iloc[-n - 1] - 1) * 100)
+
+        # === Core rate signals ===
+        ten_y = _last(tnx)
+        two_y_proxy = _last(irx)  # 13w as proxy for short rate
+        five_y = _last(fvx)
+        out['rates_10y'] = ten_y
+        out['rates_2y_proxy'] = two_y_proxy
+        if ten_y is not None and two_y_proxy is not None:
+            out['curve_slope_10_2'] = ten_y - two_y_proxy
+        out['rates_trend_20d'] = _pct_chg(tnx, 20)
+
+        # === Real rate proxy (TIPS relative to nominal Treasury) ===
+        # TIP/IEF ratio rising = TIPS outperforming = real rates falling = inflation expectations rising
+        # TIP/IEF ratio falling = real rates rising
+        if tip is not None and ief is not None and len(tip) >= 20 and len(ief) >= 20:
+            try:
+                ratio_now = tip.iloc[-1] / ief.iloc[-1]
+                ratio_20d_ago = tip.iloc[-21] / ief.iloc[-21]
+                tip_ief_chg = (ratio_now / ratio_20d_ago - 1) * 100
+                # Real rate proxy: 10Y - (5y5y breakeven crude proxy from TIP/IEF momentum)
+                # If TIP outperforming → inflation expectations rising → real rate = 10Y - 3.0% as anchor
+                # Use a simpler proxy: real_rate_signal = nominal_10Y - 2.5% (rough breakeven)
+                if ten_y is not None:
+                    out['real_rate_proxy'] = ten_y - 2.5  # rough estimate, refined via TIP/IEF
+                out['inflation_proxy_20d'] = tip_ief_chg  # positive = inflation expectations rising
+            except Exception:
+                pass
+
+        # === Inflation commodity proxy ===
+        gld_chg = _pct_chg(gld, 20)
+        uso_chg = _pct_chg(uso, 20)
+        spy_chg = _pct_chg(spy, 20)
+        commodity_inflation = (gld_chg + uso_chg) / 2 - spy_chg  # commodities outperforming = inflationary
+        # Blend with TIP/IEF inflation proxy
+        out['inflation_proxy_20d'] = (out['inflation_proxy_20d'] + commodity_inflation) / 2
+
+        # === DXY trend ===
+        out['dxy_trend_20d'] = _pct_chg(dxy, 20)
+
+        # === Credit stress: HYG vs LQD divergence ===
+        hyg_chg_5d = _pct_chg(hyg, 5)
+        lqd_chg_5d = _pct_chg(lqd, 5)
+        hyg_chg_20d = _pct_chg(hyg, 20)
+        credit_divergence = lqd_chg_5d - hyg_chg_5d  # +ve = HY underperforming IG = credit stress
+        # Credit stress score 0-100 (lower = more stress)
+        cs = 50
+        if hyg_chg_5d <= -2: cs -= 25
+        elif hyg_chg_5d <= -1: cs -= 12
+        elif hyg_chg_5d >= 1: cs += 10
+        if credit_divergence > 1: cs -= 15  # HY breaking down vs IG
+        elif credit_divergence < -0.5: cs += 8
+        if hyg_chg_20d <= -3: cs -= 10
+        out['credit_stress_score'] = max(5, min(95, cs))
+
+        # === Liquidity composite (no M2): dollar weak + credit tight in + curve steepening + bonds bid ===
+        # Higher = more liquid (more money flowing freely)
+        # Components:
+        #   - DXY weakening (-20d) → liquidity flowing out of dollar → +liquidity
+        #   - HYG up 20d → risk appetite + credit demand → +liquidity
+        #   - TLT up 20d → bond bid + falling yields → +liquidity (loosening)
+        #   - Curve steepening from inverted → +liquidity (Fed cuts coming)
+        liq = 50
+        liq -= out['dxy_trend_20d'] * 3       # DXY rising = liquidity draining
+        liq += _pct_chg(hyg, 20) * 2          # HYG rising = liquidity flowing
+        liq += _pct_chg(tlt, 20) * 1.5        # TLT rising = falling yields = loosening
+        # Curve: if curve uninverted recently, liquidity improving
+        if out['curve_slope_10_2'] is not None:
+            if out['curve_slope_10_2'] > 1.0: liq += 8       # steep curve = easy
+            elif out['curve_slope_10_2'] < -0.5: liq -= 12   # inverted = tight
+        # Rates trend
+        liq -= out['rates_trend_20d'] * 0.3   # rates rising = tightening
+        out['liquidity_score'] = max(5, min(95, liq))
+
+        # === Regime classification ===
+        signals = []
+        vix_now = _last(vix) or 20
+        rates_rising = out['rates_trend_20d'] > 3
+        rates_falling = out['rates_trend_20d'] < -3
+        high_real_rate = (out['real_rate_proxy'] or 0) > 1.5
+        rising_inflation = out['inflation_proxy_20d'] > 2
+        dollar_weak = out['dxy_trend_20d'] < -1
+        dollar_strong = out['dxy_trend_20d'] > 1
+        credit_calm = out['credit_stress_score'] > 60
+        credit_stressed = out['credit_stress_score'] < 35
+        hi_liq = out['liquidity_score'] > 60
+        lo_liq = out['liquidity_score'] < 40
+
+        # 1) RISK_OFF takes priority
+        if vix_now > 25 and credit_stressed:
+            out['regime'] = 'risk_off'
+            signals = [f'VIX={vix_now:.1f}', f'credit_stress={out["credit_stress_score"]:.0f}',
+                       'HYG/LQD diverging']
+        # 2) STAGFLATION: STRONG signals required — high rates AND clearly
+        # rising inflation AND dollar firm. Tightened to avoid false positives
+        # in "high rates + growth dominance" regime (Mag 7 era).
+        elif ((out['rates_10y'] or 0) > 4.3 and out['inflation_proxy_20d'] > 4 and
+              high_real_rate and dollar_strong):
+            out['regime'] = 'stagflation'
+            signals = [f'10Y={out["rates_10y"]:.2f}%',
+                       f'inflation_20d={out["inflation_proxy_20d"]:+.1f}%',
+                       f'real_rate≈{out["real_rate_proxy"]:+.1f}%']
+        # 3) TIGHTENING: rates rising + liquidity draining
+        elif rates_rising and (lo_liq or dollar_strong):
+            out['regime'] = 'tightening'
+            signals = [f'10Y_20d={out["rates_trend_20d"]:+.1f}%',
+                       f'DXY_20d={out["dxy_trend_20d"]:+.1f}%',
+                       f'liquidity={out["liquidity_score"]:.0f}']
+        # 4) EASY: liquidity flowing + rates not rising + credit calm + low VIX
+        elif (hi_liq or rates_falling) and credit_calm and vix_now < 20:
+            out['regime'] = 'easy'
+            signals = [f'liquidity={out["liquidity_score"]:.0f}',
+                       f'10Y_20d={out["rates_trend_20d"]:+.1f}%',
+                       f'VIX={vix_now:.1f}']
+        else:
+            out['regime'] = 'neutral'
+            signals = [f'10Y={(out["rates_10y"] or 0):.2f}',
+                       f'liq={out["liquidity_score"]:.0f}',
+                       f'VIX={vix_now:.1f}']
+
+        out['signals'] = signals
+    except Exception as e:
+        out['error'] = str(e)
+    return out
+
+
 def _calc_fcf_quality(info: dict) -> float:
     """FCF / Net Income ratio. >1.0 = high quality (90), <0.5 = concern (30)."""
     try:
@@ -1750,8 +2107,33 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
         macro_sector_adj = macro_overlay.get('sector_adjustments', {})
         macro_alerts = macro_overlay.get('alerts', [])
 
-        # Pre-compute cross-sectional factor ranks (Fama-French)
-        cross_sectional = _compute_cross_sectional_factors(tickers, all_info_data, all_hist_data)
+        # Detect professional macro regime ONCE (rates, real rate, credit,
+        # DXY, liquidity — NOT M2). Passed to scoring_data so weights adapt
+        # to the current macro environment.
+        try:
+            _regime_data = detect_macro_regime()
+            _macro_regime = _regime_data.get('regime', 'neutral')
+        except Exception:
+            _macro_regime = 'neutral'
+
+        # Cross-sectional factor ranks (Fama-French).
+        # Large batches compute and CACHE into session state. Small batches
+        # (e.g. single-ticker trade page) reuse the universe cache so the
+        # score there matches the score in the signals table.
+        if len(tickers) >= 20:
+            cross_sectional = _compute_cross_sectional_factors(tickers, all_info_data, all_hist_data)
+            try:
+                _cache = st.session_state.get('_cs_universe_cache', {})
+                _cache.update(cross_sectional)
+                st.session_state['_cs_universe_cache'] = _cache
+            except Exception:
+                pass
+        else:
+            universe_cs = _get_universe_cross_sectional()
+            cross_sectional = {t: universe_cs.get(t, {
+                'fama_momentum': 50, 'fama_low_vol': 50,
+                'fama_value': 50, 'fama_quality': 50,
+            }) for t in tickers}
 
         # Pre-compute sector PE medians
         sector_pe_map = {}
@@ -2097,6 +2479,8 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                     'macro_spy_chg': macro_overlay.get('spy_chg', 0),
                     # Macro regime boost (direct sector rotation)
                     'macro_regime_boost': _macro_regime_boost,
+                    # Professional macro regime (easy/tightening/stagflation/risk_off/neutral)
+                    'macro_regime': _macro_regime,
                     # Cross-sectional Fama-French factors
                     'fama_momentum': _cs.get('fama_momentum', 50),
                     'fama_low_vol': _cs.get('fama_low_vol', 50),
