@@ -3422,8 +3422,16 @@ def _show_technical_tab(ticker: str, data: dict):
             # Drop rows with NaN OHLC (critical - lightweight-charts crashes on null)
             _df = _df.dropna(subset=['open', 'high', 'low', 'close'])
 
-            # Format timestamps: lightweight-charts needs epoch seconds (int) for proper handling
-            _df['time'] = pd.to_datetime(_df['time']).astype('int64') // 10**9  # Unix epoch seconds
+            # Format timestamps: lightweight-charts needs epoch seconds (int).
+            # yfinance may return tz-aware datetimes; strip the timezone so
+            # the int64 conversion is consistent across pandas versions.
+            _t = pd.to_datetime(_df['time'], utc=True, errors='coerce')
+            try:
+                _t = _t.dt.tz_convert(None)
+            except (AttributeError, TypeError):
+                pass
+            _df['time'] = (_t.astype('int64') // 10**9).astype('int64')
+            _df = _df.drop_duplicates(subset=['time'])  # defensive: no overlapping bars
 
             # SMA + Bollinger Bands
             _df['sma20'] = _df['close'].rolling(20).mean()
@@ -4333,7 +4341,14 @@ El percentil compara el valor actual vs historico del ticker para detectar extre
                 _time_col = _pdf.columns[0]
                 _pdf = _pdf.rename(columns={_time_col: 'time', 'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close'})
                 _pdf = _pdf.dropna(subset=['open', 'high', 'low', 'close'])
-                _pdf['time'] = pd.to_datetime(_pdf['time']).astype('int64') // 10**9
+                # Defensive epoch conversion (tz-aware safe)
+                _pt = pd.to_datetime(_pdf['time'], utc=True, errors='coerce')
+                try:
+                    _pt = _pt.dt.tz_convert(None)
+                except (AttributeError, TypeError):
+                    pass
+                _pdf['time'] = (_pt.astype('int64') // 10**9).astype('int64')
+                _pdf = _pdf.drop_duplicates(subset=['time'])
                 _price_candles = _to_rec(_pdf[['time', 'open', 'high', 'low', 'close']])
 
             _base_layout = {
