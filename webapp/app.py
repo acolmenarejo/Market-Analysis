@@ -3745,48 +3745,59 @@ def _show_options_tab(ticker: str, data: dict):
 
     st.markdown("### Options & Gamma Analysis")
 
-    # Fetch options data (with retry on rate limit)
-    import time as _time
+    # Fetch expirations using the global _yf_retry (4 attempts, backoff
+    # 1.5/3/6/12s) and a session cache so we don't hammer Yahoo on every
+    # rerender of the page.
+    from webapp.data.providers import _yf_retry as _yf_r
     stock = yf.Ticker(ticker)
-    expirations = None
-    for _attempt in range(3):
-        try:
-            expirations = stock.options
-            break
-        except Exception as e:
-            if 'too many requests' in str(e).lower() or '429' in str(e):
-                _time.sleep(2 * (2 ** _attempt))
-            else:
-                st.error(f"Error obteniendo opciones: {e}")
-                return
-    if expirations is None:
-        st.error("Rate limited por yfinance. Espera unos segundos y recarga.")
-        return
+
+    _exp_cache_key = f"opt_exp_cache_{ticker}"
+    expirations = st.session_state.get(_exp_cache_key)
+    if not expirations:
+        expirations = _yf_r(lambda: stock.options)
+        if expirations:
+            st.session_state[_exp_cache_key] = expirations
 
     if not expirations:
-        st.warning(f"No hay datos de opciones para {ticker}")
+        st.warning(
+            "⚠️ Yahoo Finance limitó las peticiones de opciones (rate limit). "
+            "Esto suele resolverse en 30-60 segundos."
+        )
+        col_r1, col_r2 = st.columns([1, 4])
+        with col_r1:
+            if st.button("🔄 Reintentar", key=f"opt_retry_{ticker}", type="primary"):
+                st.session_state.pop(_exp_cache_key, None)
+                st.rerun()
+        with col_r2:
+            st.caption("Mientras tanto puedes consultar el chart técnico y los fundamentales.")
         return
 
     # Controls row
     col_exp, col_multi, col_info = st.columns([2, 1, 3])
     with col_exp:
-        selected_exp = st.selectbox("Expiracion", expirations[:12], key=f"opt_exp_{ticker}")
+        selected_exp = st.selectbox("Expiracion", expirations[:12], key=f"opt_exp_sel_{ticker}")
     with col_multi:
         multi_exp = st.checkbox("Multi-Exp GEX", value=True, key=f"multi_gex_{ticker}",
                                 help="Aggregate gamma across nearest 4 expirations for stronger signal")
 
-    chain = None
-    for _retry in range(3):
-        try:
-            chain = stock.option_chain(selected_exp)
-            break
-        except Exception as e:
-            if _retry < 2:
-                import time as _time
-                _time.sleep(2 * (_retry + 1))
-            else:
-                st.error(f"Error loading options: {e}")
-                return
+    # Cache the option chain per (ticker, expiration) so flipping between
+    # expirations or rerendering doesn't re-fetch.
+    _chain_cache_key = f"opt_chain_{ticker}_{selected_exp}"
+    chain = st.session_state.get(_chain_cache_key)
+    if chain is None:
+        chain = _yf_r(lambda: stock.option_chain(selected_exp))
+        if chain is not None:
+            st.session_state[_chain_cache_key] = chain
+
+    if chain is None:
+        st.warning(
+            f"⚠️ Yahoo rate-limit al cargar la cadena {selected_exp}. "
+            "Espera 30s y pulsa Reintentar."
+        )
+        if st.button("🔄 Reintentar cadena", key=f"opt_chain_retry_{ticker}_{selected_exp}"):
+            st.session_state.pop(_chain_cache_key, None)
+            st.rerun()
+        return
     calls = chain.calls.copy()
     puts = chain.puts.copy()
 
