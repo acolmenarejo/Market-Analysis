@@ -3431,17 +3431,21 @@ def _show_technical_tab(ticker: str, data: dict):
             _df['bb_upper'] = _df['sma20'] + 2 * _std20
             _df['bb_lower'] = _df['sma20'] - 2 * _std20
 
-            # Supertrend (split into bullish/bearish segments so we can color them differently)
+            # Supertrend — render as ONE line using whichever segment is active
+            # at each bar. Earlier two-series approach created phantom horizontal
+            # lines connecting across gaps (lightweight-charts joins endpoints
+            # when a series has missing rows), which made the chart look like
+            # a single giant filled candle.
             st_line = supertrend.get('line', pd.Series(dtype=float))
             st_dir = supertrend.get('direction', pd.Series(dtype=int))
             if len(st_line) == len(_df):
                 _df['st_line'] = st_line.values
                 _df['st_dir'] = st_dir.values
-                _df['st_bull'] = np.where(_df['st_dir'] == 1, _df['st_line'], np.nan)
-                _df['st_bear'] = np.where(_df['st_dir'] == -1, _df['st_line'], np.nan)
             else:
-                _df['st_bull'] = np.nan
-                _df['st_bear'] = np.nan
+                _df['st_line'] = np.nan
+                _df['st_dir'] = 0
+            st_last_dir = int(_df['st_dir'].iloc[-1]) if not _df.empty else 1
+            ST_COLOR = '#3fb950' if st_last_dir == 1 else '#f85149'
 
             # OBV for confluence pane
             if len(obv_series) == len(_df):
@@ -3467,8 +3471,7 @@ def _show_technical_tab(ticker: str, data: dict):
             _sma20_data = _to_records(_df[['time','sma20']].dropna().rename(columns={'sma20':'value'}))
             _bb_upper_data = _to_records(_df[['time','bb_upper']].dropna().rename(columns={'bb_upper':'value'}))
             _bb_lower_data = _to_records(_df[['time','bb_lower']].dropna().rename(columns={'bb_lower':'value'}))
-            _st_bull_data = _to_records(_df[['time','st_bull']].dropna().rename(columns={'st_bull':'value'}))
-            _st_bear_data = _to_records(_df[['time','st_bear']].dropna().rename(columns={'st_bear':'value'}))
+            _st_line_data = _to_records(_df[['time','st_line']].dropna().rename(columns={'st_line':'value'}))
             _obv_data = _to_records(_df[['time','obv']].rename(columns={'obv':'value'}))
             _obv_ema_data = _to_records(_df[['time','obv_ema']].rename(columns={'obv_ema':'value'}))
 
@@ -3525,9 +3528,13 @@ def _show_technical_tab(ticker: str, data: dict):
                 {"type": "Line", "data": _sma20_data, "options": {"color": "#d29922", "lineWidth": 1, "title": "SMA20"}},
                 {"type": "Line", "data": _bb_upper_data, "options": {"color": "rgba(139,148,158,0.5)", "lineWidth": 1, "lineStyle": 2}},
                 {"type": "Line", "data": _bb_lower_data, "options": {"color": "rgba(139,148,158,0.5)", "lineWidth": 1, "lineStyle": 2}},
-                # Supertrend (green when bullish, red when bearish — flips are entry signals)
-                {"type": "Line", "data": _st_bull_data, "options": {"color": "#3fb950", "lineWidth": 2, "title": "Supertrend"}},
-                {"type": "Line", "data": _st_bear_data, "options": {"color": "#f85149", "lineWidth": 2, "title": "Supertrend"}},
+                # Supertrend as ONE dashed line (color = current direction).
+                # Previously rendered as two series with NaN gaps which caused
+                # lightweight-charts to draw straight phantom lines connecting
+                # endpoints across the gaps, hiding the candles underneath.
+                {"type": "Line", "data": _st_line_data, "options": {
+                    "color": ST_COLOR, "lineWidth": 1, "lineStyle": 2, "title": "Supertrend"
+                }},
             ]
 
             # Pane 2: Konkorde
