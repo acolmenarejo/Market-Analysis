@@ -2255,19 +2255,31 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                 'fama_value': 50, 'fama_quality': 50,
             }) for t in tickers}
 
-        # Pre-compute sector PE medians
+        # Pre-compute P/E medians at BOTH industry and sector level. We prefer
+        # industry (e.g. "Independent Power Producers") over the broader sector
+        # ("Utilities") because high-growth subsectors like IPP / AI-power get
+        # unfairly penalized when compared against regulated-utility medians.
+        # Industry median needs >=3 samples to be reliable; otherwise we fall
+        # back to sector.
+        industry_pe_map = {}
         sector_pe_map = {}
         for _t in tickers:
             _t_info = all_info_data.get(_t, {})
             _t_sector = _t_info.get('sector', 'N/A')
+            _t_industry = _t_info.get('industry', 'N/A')
             _t_pe = _t_info.get('trailingPE', None) or _t_info.get('forwardPE', None)
             try:
                 _t_pe = float(_t_pe) if _t_pe is not None else None
                 if _t_pe and not pd.isna(_t_pe) and 0 < _t_pe < 200:
                     sector_pe_map.setdefault(_t_sector, []).append(_t_pe)
+                    industry_pe_map.setdefault(_t_industry, []).append(_t_pe)
             except (TypeError, ValueError):
                 pass
         sector_pe_medians = {s: sorted(pes)[len(pes) // 2] for s, pes in sector_pe_map.items() if pes}
+        industry_pe_medians = {
+            ind: sorted(pes)[len(pes) // 2]
+            for ind, pes in industry_pe_map.items() if len(pes) >= 3
+        }
 
         for i, ticker in enumerate(tickers):
 
@@ -2522,8 +2534,13 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                 except (TypeError, ValueError):
                     earnings_surprise = float(momentum_1m) * 0.8
 
-                # Sector PE Median: from pre-computed medians
-                _sector_pe_med = sector_pe_medians.get(sector, 20)
+                # P/E Median: prefer INDUSTRY median (more granular and fair for
+                # growth subsectors like IPP, biotech, semis). Fall back to
+                # sector median if industry has too few samples.
+                _industry = info.get('industry', 'N/A')
+                _sector_pe_med = industry_pe_medians.get(
+                    _industry, sector_pe_medians.get(sector, 20)
+                )
 
                 # Dividend Growth: from 5yr avg vs current
                 try:
@@ -2614,6 +2631,7 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                     'Ticker': ticker,
                     'Empresa': company_name[:30] if len(company_name) > 30 else company_name,
                     'Sector': sector,
+                    'Industry': info.get('industry', 'N/A') if info else 'N/A',
                     'Precio': f"${price_val:.2f}" if price_val else 'N/A',
                     'Score CP': result.short_term.total_score,
                     'Señal CP': result.short_term.signal.value,
@@ -2621,6 +2639,9 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                     'Señal MP': result.medium_term.signal.value,
                     'Score LP': result.long_term.total_score,
                     'Señal LP': result.long_term.signal.value,
+                    # Carry sector_pe_median so get_score_explanation can show
+                    # the correct industry-aware benchmark.
+                    'sector_pe_median': _sector_pe_med,
                 })
 
             except Exception as e:
@@ -3557,22 +3578,60 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
     analyst_upside = ((target_price - price) / price * 100) if price > 0 and target_price > 0 else 0
 
     # Price vs intrinsic value estimates
+    # Graham Number is a deep-value formula (defensive low-growth stocks).
+    # It produces wildly bearish numbers for high-growth names (e.g. VST with
+    # 43% rev growth gets Graham=$32 vs actual price $160 = -80% "downside"),
+    # which is noise. Skip it when revenue growth is materially high.
     graham_value = 0
-    if trailing_eps > 0 and book_value > 0:
+    is_high_growth = (rev_growth or 0) > 20 or (earn_growth or 0) > 20
+    if trailing_eps > 0 and book_value > 0 and not is_high_growth:
         graham_value = (22.5 * trailing_eps * book_value) ** 0.5
+
+    # DCF: discounted cash flow proxy using forward EPS with growth DECAY.
+    # The old formula fair = forward_eps * (8.5 + 2*growth) applied the growth
+    # rate as if it were eternal, which inflated values for high-growth names
+    # (e.g. +300% upside for VST). Real-world growth fades — model it as a
+    # 5-year explicit decay from current growth to 5% terminal, plus a
+    # Gordon-style perpetuity at terminal.
     dcf_upside = 0
     if forward_eps > 0 and price > 0:
-        # Simple DCF: fair value = forward_eps * (8.5 + 2*growth_rate)
-        growth = max(earn_growth, rev_growth) if earn_growth > 0 or rev_growth > 0 else 5
-        dcf_fair = forward_eps * (8.5 + 2 * min(growth, 25))
-        dcf_upside = ((dcf_fair - price) / price * 100) if dcf_fair > 0 else 0
+        g0 = max(min(max(earn_growth or 0, rev_growth or 0) / 100, 0.40), 0.02)  # 2-40%
+        g_terminal = 0.05
+        wacc = 0.10  # 10% discount rate
+        eps_t = forward_eps
+        pv = 0.0
+        for yr in range(1, 6):
+            # Linear decay from g0 toward g_terminal across 5 years
+            g_yr = g0 + (g_terminal - g0) * (yr / 5)
+            eps_t = eps_t * (1 + g_yr)
+            pv += eps_t / ((1 + wacc) ** yr)
+        # Terminal value (Gordon growth)
+        terminal_value = eps_t * (1 + g_terminal) / (wacc - g_terminal)
+        pv += terminal_value / ((1 + wacc) ** 5)
+        # Compare to current price (per share)
+        dcf_fair = pv
+        if 0 < dcf_fair < price * 5:  # sanity cap at 5x to avoid extreme outliers
+            dcf_upside = ((dcf_fair - price) / price * 100)
 
-    # Sector P/E benchmarks
+    # P/E benchmarks — prefer the scored row's industry/sector median (already
+    # computed in get_multi_horizon_scores using actual universe data). Fall
+    # back to hardcoded sector defaults if the row didn't carry one through.
     benchmarks = {'Technology': 30, 'Healthcare': 22, 'Financial Services': 14,
                   'Consumer Cyclical': 20, 'Energy': 12, 'Industrials': 18,
                   'Consumer Defensive': 22, 'Communication Services': 20, 'Utilities': 16,
                   'Real Estate': 30, 'Basic Materials': 15}
-    sector_pe = benchmarks.get(sector, 20)
+    # row['sector_pe_median'] is industry-when-available (from our recent fix),
+    # falling back to sector. If missing, use the hardcoded sector default.
+    try:
+        sector_pe = float(row.get('sector_pe_median')) if row.get('sector_pe_median') else benchmarks.get(sector, 20)
+    except (TypeError, ValueError):
+        sector_pe = benchmarks.get(sector, 20)
+    # Use industry name in display when we have it
+    industry_name = stock_data.get('industry') or sector
+    pe_benchmark_label = industry_name if (
+        industry_name and industry_name != 'N/A' and industry_name != sector
+        and row.get('sector_pe_median')
+    ) else sector
 
     # =========================================================================
     # Congress trades analysis (skipped if skip_congress=True)
@@ -3855,6 +3914,44 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
     elif rsi > 60:
         st_factors.append(('RSI elevado', -3, f'RSI={rsi:.0f} en zona alta', 'bearish'))
 
+    # Stochastic RSI — sensitive momentum oscillator. More responsive than RSI
+    # to short-term overbought / oversold conditions. We surface it as a
+    # separate factor when it reads extreme (>80 = overbought, <20 = oversold)
+    # or when it crosses up from oversold (bullish entry trigger).
+    try:
+        _hist_for_stoch = stock_data.get('history')
+        if _hist_for_stoch is not None and not _hist_for_stoch.empty and 'Close' in _hist_for_stoch.columns:
+            _stoch = calculate_stoch_rsi(_hist_for_stoch['Close'])
+            _sk = _stoch.get('k', pd.Series(dtype=float))
+            _sd = _stoch.get('d', pd.Series(dtype=float))
+            if len(_sk) >= 2 and not pd.isna(_sk.iloc[-1]):
+                _k_now = float(_sk.iloc[-1])
+                _d_now = float(_sd.iloc[-1]) if len(_sd) >= 1 and not pd.isna(_sd.iloc[-1]) else 50
+                _k_prev = float(_sk.iloc[-2]) if not pd.isna(_sk.iloc[-2]) else 50
+                _d_prev = float(_sd.iloc[-2]) if len(_sd) >= 2 and not pd.isna(_sd.iloc[-2]) else 50
+                _bull_cross_oversold = (_k_prev <= _d_prev and _k_now > _d_now and _k_now < 30)
+                _bear_cross_overbought = (_k_prev >= _d_prev and _k_now < _d_now and _k_now > 70)
+                if _bull_cross_oversold:
+                    st_factors.append(('Stoch RSI cruce alcista', +8,
+                        f'StochRSI K={_k_now:.0f} cruzando D={_d_now:.0f} en sobreventa - entrada CP', 'bullish'))
+                elif _bear_cross_overbought:
+                    st_factors.append(('Stoch RSI cruce bajista', -8,
+                        f'StochRSI K={_k_now:.0f} cruzando D={_d_now:.0f} en sobrecompra - salida CP', 'bearish'))
+                elif _k_now > 90:
+                    st_factors.append(('Stoch RSI muy sobrecomprado', -6,
+                        f'StochRSI={_k_now:.0f} - momentum agotado, riesgo correccion', 'bearish'))
+                elif _k_now > 80:
+                    st_factors.append(('Stoch RSI sobrecomprado', -3,
+                        f'StochRSI={_k_now:.0f} - zona de cautela', 'bearish'))
+                elif _k_now < 10:
+                    st_factors.append(('Stoch RSI muy sobrevendido', +6,
+                        f'StochRSI={_k_now:.0f} - rebote tecnico probable', 'bullish'))
+                elif _k_now < 20:
+                    st_factors.append(('Stoch RSI sobrevendido', +3,
+                        f'StochRSI={_k_now:.0f} - zona de oportunidad', 'bullish'))
+    except Exception:
+        pass
+
     # MACD
     if macd_bullish and momentum_1m > 3:
         st_factors.append(('MACD cruce alcista', +8, 'Cruce alcista con momentum', 'bullish'))
@@ -4104,11 +4201,28 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
     elif momentum_3m <= -2:
         mt_factors.append(('Momentum 3M leve negativo', -3, f'{momentum_3m:.1f}% en 3 meses', 'bearish'))
 
-    # Fundamental quality (ROE)
+    # Fundamental quality (ROE) — penalize "leveraged ROE" when D/E is high.
+    # A 40%+ ROE with D/E > 200% is partially leverage-juiced (DuPont
+    # decomposition: ROE = NetMargin × AssetTurnover × Leverage). Cap the
+    # bonus and add a warning so the reader sees the context.
+    high_leverage = (debt_equity or 0) > 200
+    extreme_leverage = (debt_equity or 0) > 350
     if roe >= 35:
-        mt_factors.append(('ROE excepcional', +10, f'ROE={roe:.1f}% - rentabilidad clase mundial', 'bullish'))
+        bonus = 10
+        if extreme_leverage:
+            bonus = 5
+            mt_factors.append(('ROE alto pero apalancado', -2,
+                f'ROE={roe:.1f}% con D/E={debt_equity:.0f}% - ROE inflado por leverage', 'bearish'))
+        elif high_leverage:
+            bonus = 7
+        mt_factors.append(('ROE excepcional', bonus, f'ROE={roe:.1f}% - rentabilidad clase mundial', 'bullish'))
     elif roe >= 20:
-        mt_factors.append(('ROE muy alto', +8, f'ROE={roe:.1f}% - ventaja competitiva', 'bullish'))
+        bonus = 8
+        if extreme_leverage:
+            bonus = 4
+        elif high_leverage:
+            bonus = 6
+        mt_factors.append(('ROE muy alto', bonus, f'ROE={roe:.1f}% - ventaja competitiva', 'bullish'))
     elif roe >= 12:
         mt_factors.append(('Calidad fundamental', +5, f'ROE={roe:.1f}% - buena rentabilidad', 'bullish'))
     elif roe >= 6:
@@ -4176,10 +4290,18 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
     elif 1 <= peg <= 2:
         mt_factors.append(('PEG razonable', +1, f'PEG={peg:.2f}', 'bullish'))
 
-    # Liquidity mid-term risk
-    if current_ratio > 0 and current_ratio < 1.0:
-        mt_factors.append(('Riesgo liquidez', -6, f'Current ratio={current_ratio:.2f} - insuficiente', 'bearish'))
-    elif current_ratio >= 2.0:
+    # Liquidity mid-term risk — sector-aware thresholds. Utilities, REITs,
+    # financials and integrated energy companies structurally operate with
+    # current ratio < 1 (long-cycle revenue, working capital negative). For
+    # those, only flag when ratio is materially below the sector norm.
+    _liquidity_lenient_sectors = {'Utilities', 'Real Estate', 'Financial Services', 'Energy'}
+    _sector_lenient = sector in _liquidity_lenient_sectors
+    _current_floor = 0.7 if _sector_lenient else 1.0
+    _current_ceiling = 1.3 if _sector_lenient else 2.0
+    if current_ratio > 0 and current_ratio < _current_floor:
+        mt_factors.append(('Riesgo liquidez', -6,
+            f'Current ratio={current_ratio:.2f} - bajo incluso para {sector}', 'bearish'))
+    elif current_ratio >= _current_ceiling:
         mt_factors.append(('Liquidez solida', +3, f'Current ratio={current_ratio:.2f}', 'bullish'))
 
     # Debt mid-term risk
@@ -4280,18 +4402,24 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
     # =========================================================================
     lt_factors = []
 
-    # Valuation - P/E vs sector
+    # Valuation - P/E vs industry/sector benchmark
     if pe > 0:
+        _bench_lbl = f"{pe_benchmark_label}={sector_pe:.0f}"
         if pe > sector_pe * 1.5:
-            lt_factors.append(('P/E muy elevado vs sector', -10, f'P/E={pe:.1f} vs sector={sector_pe} ({pe/sector_pe:.1f}x)', 'bearish'))
+            lt_factors.append((f'P/E muy elevado vs {pe_benchmark_label}', -10,
+                f'P/E={pe:.1f} vs {_bench_lbl} ({pe/sector_pe:.1f}x)', 'bearish'))
         elif pe > sector_pe * 1.2:
-            lt_factors.append(('P/E elevado vs sector', -5, f'P/E={pe:.1f} vs sector={sector_pe}', 'bearish'))
+            lt_factors.append((f'P/E elevado vs {pe_benchmark_label}', -5,
+                f'P/E={pe:.1f} vs {_bench_lbl}', 'bearish'))
         elif pe < sector_pe * 0.7:
-            lt_factors.append(('P/E atractivo vs sector', +8, f'P/E={pe:.1f} vs sector={sector_pe} - value', 'bullish'))
+            lt_factors.append((f'P/E atractivo vs {pe_benchmark_label}', +8,
+                f'P/E={pe:.1f} vs {_bench_lbl} - value', 'bullish'))
         elif pe < sector_pe * 0.9:
-            lt_factors.append(('P/E razonable', +4, f'P/E={pe:.1f} vs sector={sector_pe}', 'bullish'))
+            lt_factors.append(('P/E razonable', +4,
+                f'P/E={pe:.1f} vs {_bench_lbl}', 'bullish'))
         else:
-            lt_factors.append(('P/E en linea con sector', +1, f'P/E={pe:.1f} vs sector={sector_pe}', 'bullish'))
+            lt_factors.append((f'P/E en linea con {pe_benchmark_label}', +1,
+                f'P/E={pe:.1f} vs {_bench_lbl}', 'bullish'))
 
     # P/B ratio (book value)
     if pb > 0:
@@ -4340,11 +4468,22 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
     elif fcf_yield < 0:
         lt_factors.append(('FCF negativo', -7, f'FCF Yield={fcf_yield:.1f}% - quema caja', 'bearish'))
 
-    # ROE long-term — granular tiers
+    # ROE long-term — granular tiers with leverage adjustment. High ROE
+    # propped up by high D/E is not a real moat signal.
     if roe >= 35:
-        lt_factors.append(('ROE clase mundial', +12, f'ROE={roe:.1f}% - moat estructural', 'bullish'))
+        bonus_lt = 12
+        if extreme_leverage:
+            bonus_lt = 6
+        elif high_leverage:
+            bonus_lt = 9
+        lt_factors.append(('ROE clase mundial', bonus_lt, f'ROE={roe:.1f}% - moat estructural', 'bullish'))
     elif roe >= 20:
-        lt_factors.append(('ROE excepcional', +10, f'ROE={roe:.1f}% - moat potencial', 'bullish'))
+        bonus_lt = 10
+        if extreme_leverage:
+            bonus_lt = 5
+        elif high_leverage:
+            bonus_lt = 7
+        lt_factors.append(('ROE excepcional', bonus_lt, f'ROE={roe:.1f}% - moat potencial', 'bullish'))
     elif roe >= 12:
         lt_factors.append(('ROE bueno', +5, f'ROE={roe:.1f}%', 'bullish'))
     elif roe >= 6:
@@ -4375,10 +4514,17 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
         lt_factors.append(('Deuda controlada', +3, f'D/E={debt_equity:.0f}%', 'bullish'))
 
     # Liquidity long-term
-    if current_ratio > 0 and current_ratio < 0.8:
-        lt_factors.append(('Riesgo liquidez serio', -7, f'Current ratio={current_ratio:.2f}', 'bearish'))
-    if quick_ratio > 0 and quick_ratio < 0.5:
-        lt_factors.append(('Quick ratio muy bajo', -5, f'Quick ratio={quick_ratio:.2f}', 'bearish'))
+    # Liquidity long-term — sector-aware. Utilities, REITs, financials and
+    # energy majors run with low current/quick ratios as a STRUCTURAL feature,
+    # not a risk. Use stricter trigger for non-financial sectors.
+    _lt_current_floor = 0.5 if _sector_lenient else 0.8
+    _lt_quick_floor = 0.3 if _sector_lenient else 0.5
+    if current_ratio > 0 and current_ratio < _lt_current_floor:
+        lt_factors.append(('Riesgo liquidez serio', -7,
+            f'Current ratio={current_ratio:.2f} - bajo incluso para {sector}', 'bearish'))
+    if quick_ratio > 0 and quick_ratio < _lt_quick_floor:
+        lt_factors.append(('Quick ratio muy bajo', -5,
+            f'Quick ratio={quick_ratio:.2f} - bajo incluso para {sector}', 'bearish'))
 
     # Margins long-term — granular
     if profit_margin >= 35:
