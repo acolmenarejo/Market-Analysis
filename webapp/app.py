@@ -3157,18 +3157,39 @@ def show_stock_analysis():
     price_color = "#10B981" if change_pct >= 0 else "#EF4444"
     change_sym = "▲" if change_pct >= 0 else "▼"
 
-    scores_df = get_multi_horizon_scores([ticker])
-    if not scores_df.empty:
-        row = scores_df.iloc[0]
-        score_cp = row.get('Score CP', 0)
-        score_mp = row.get('Score MP', 0)
-        score_lp = row.get('Score LP', 0)
-        signal_cp = row.get('Señal CP', 'N/A')
-        signal_mp = row.get('Señal MP', 'N/A')
-        signal_lp = row.get('Señal LP', 'N/A')
+    # Use ENRICHED scoring for individual stock page — adds per-ticker
+    # options signals (IV, skew, P/C OI, GEX, squeeze, catalyst proximity),
+    # fundamental momentum (analyst revisions, insider clusters, ROIC trend,
+    # earnings streak), and shared macro proxies (sector rotation, credit
+    # risk). Far more differentiation across CP/MP/LP than the batch path.
+    try:
+        from webapp.data.providers import get_enriched_scores
+        enriched = get_enriched_scores(ticker)
+    except Exception:
+        enriched = None
+
+    if enriched and 'error' not in enriched:
+        score_cp = enriched['short_term']['score']
+        score_mp = enriched['medium_term']['score']
+        score_lp = enriched['long_term']['score']
+        signal_cp = enriched['short_term']['signal']
+        signal_mp = enriched['medium_term']['signal']
+        signal_lp = enriched['long_term']['signal']
+        row = {'Score CP': score_cp, 'Score MP': score_mp, 'Score LP': score_lp,
+               'Señal CP': signal_cp, 'Señal MP': signal_mp, 'Señal LP': signal_lp}
     else:
-        score_cp = score_mp = score_lp = 0
-        signal_cp = signal_mp = signal_lp = 'N/A'
+        scores_df = get_multi_horizon_scores([ticker])
+        if not scores_df.empty:
+            row = scores_df.iloc[0]
+            score_cp = row.get('Score CP', 0)
+            score_mp = row.get('Score MP', 0)
+            score_lp = row.get('Score LP', 0)
+            signal_cp = row.get('Señal CP', 'N/A')
+            signal_mp = row.get('Señal MP', 'N/A')
+            signal_lp = row.get('Señal LP', 'N/A')
+        else:
+            score_cp = score_mp = score_lp = 0
+            signal_cp = signal_mp = signal_lp = 'N/A'
 
     # Header + Score badges
     col_h1, col_h2 = st.columns([3, 2])

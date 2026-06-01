@@ -67,41 +67,52 @@ SHORT_TERM_WEIGHTS = {
     # (negative — low-vol underperformed high-vol). vix_regime near zero.
     # Keep tech signals, boost quality, drop fama_low_vol weight.
 
-    # Technical signals (26%)
+    # ============= HORIZON-SPECIFIC SIGNALS (NEW v6) =============
+    # Options & catalyst-driven — drive CP differentiation vs MP/LP.
+    # When the individual ticker is enriched via get_enriched_scores these
+    # carry real per-ticker values; in the batch path they default to 50.
+    'iv_percentile_realized': 0.04,   # low IV = cheap optionality
+    'skew_score': 0.04,               # contrarian skew signal
+    'pc_ratio_score': 0.03,           # P/C OI extremes
+    'gex_regime_score': 0.03,         # gamma regime (volatility amplification)
+    'squeeze_potential_score': 0.03,  # SI + DTC + call OI confluence
+    'catalyst_proximity_score': 0.05, # earnings/event proximity with cheap IV
+    'credit_risk_score': 0.03,        # systemic credit (HYG/LQD spread)
+
+    # Technical signals (29%)
     'rsi': 0.05,
     'macd': 0.04,
-    'bollinger_position': 0.04,      # +0.02 IC at ST
+    'bollinger_position': 0.04,
     'konkorde': 0.03,
     'konkorde_divergence': 0.02,
-    'trendline_breakout': 0.04,
-    'rsi_crossover': 0.02,
-    'volume_profile': 0.02,
+    'trendline_breakout': 0.05,
+    'rsi_crossover': 0.03,
+    'volume_profile': 0.03,
 
-    # Mean-reversion (12%) — slight reduction
-    'mean_reversion': 0.06,
-    'iv_percentile': 0.03,
-    'skew_score': 0.02,
+    # Mean-reversion (8%)
+    'mean_reversion': 0.05,
+    'iv_percentile': 0.02,
     'vix_regime': 0.01,
 
-    # Momentum (10%)
-    'momentum_1w': 0.03,
-    'momentum_1m': 0.04,
+    # Momentum (8%)
+    'momentum_1w': 0.02,
+    'momentum_1m': 0.03,
     'relative_strength': 0.03,
 
-    # MACRO OVERLAY (18%) — slight reduction (IC near zero)
-    'macro_overlay': 0.06,
-    'macro_sector_impact': 0.06,
-    'macro_regime_boost': 0.06,
+    # MACRO OVERLAY (12%) — reduced (shared signals contribute too)
+    'macro_overlay': 0.04,
+    'macro_sector_impact': 0.04,
+    'macro_regime_boost': 0.04,
 
-    # Speculative + Quality (24%) — boost quality_gate (best IC at ST)
-    'congress_score': 0.05,
-    'news_sentiment': 0.03,
-    'options_flow': 0.04,
-    'quality_gate': 0.12,            # Boosted from 0.06 — +0.09 IC
+    # Sector + Speculative (12%)
+    'sector_rotation_score': 0.04,  # NEW: sector momentum tilt
+    'congress_score': 0.03,
+    'news_sentiment': 0.02,
+    'quality_gate': 0.03,
 
-    # Factor Model (10%) — drop fama_low_vol weight (negative IC)
-    'fama_momentum': 0.08,           # Boosted from 0.04
-    'fama_low_vol': 0.02,            # Reduced from 0.04 (-0.10 IC)
+    # Factor Model (6%)
+    'fama_momentum': 0.04,
+    'fama_low_vol': 0.02,
 }  # Total: 1.00
 
 MEDIUM_TERM_WEIGHTS = {
@@ -111,42 +122,49 @@ MEDIUM_TERM_WEIGHTS = {
     # overlay are the ONLY factors with robust positive IC in BOTH regimes.
     # Reweight toward robust factors; keep moderate quality exposure.
 
-    # Momentum (28%) — most robust across regimes
-    'momentum_6m': 0.10,        # +0.08 train AND OOS
+    # ============= MP-SPECIFIC SIGNALS (NEW v6) =============
+    # Fundamental momentum + flow — drives MP differentiation. These are
+    # 3-12 month horizon signals (revisions, insider clusters, ROIC trend,
+    # earnings streaks) that don't apply to CP or LP.
+    'analyst_revisions_score': 0.06,   # 90d revisions velocity
+    'insider_cluster_score': 0.05,     # >3 insiders buying
+    'earnings_streak_score': 0.04,     # consecutive positive surprises
+    'roic_trend_score': 0.03,          # multi-year ROIC trajectory
+    'sector_rotation_score': 0.04,     # sector momentum alignment
+    'credit_risk_score': 0.02,         # systemic credit context
+
+    # Momentum (24%) — most robust across regimes
+    'momentum_6m': 0.09,
     'momentum_3m': 0.07,
-    'fama_momentum': 0.07,
-    'analyst_revisions': 0.03,
-    'earnings_momentum': 0.03,
+    'fama_momentum': 0.05,
+    'analyst_revisions': 0.02,
+    'earnings_momentum': 0.01,
 
-    # MACRO OVERLAY (20%) — robust positive (especially strong in OOS regime)
-    'macro_overlay': 0.07,
-    'macro_sector_impact': 0.06,
-    'macro_regime_boost': 0.07,
+    # MACRO OVERLAY (15%) — slight reduction
+    'macro_overlay': 0.05,
+    'macro_sector_impact': 0.05,
+    'macro_regime_boost': 0.05,
 
-    # Quality (20%) — strong in train, neutral in OOS. Keep moderate.
-    'roe': 0.05,
+    # Quality (18%) — strong in train, neutral in OOS. Keep moderate.
+    'roe': 0.04,
     'roic': 0.04,
     'fama_quality': 0.04,
-    'quality_gate': 0.04,
+    'quality_gate': 0.03,
     'fcf_quality_mt': 0.03,
 
-    # Contrarian (8%)
-    'mean_reversion': 0.04,
+    # Contrarian (6%)
+    'mean_reversion': 0.03,
     'sector_rs': 0.02,
     'short_interest': 0.01,
-    'vix_regime': 0.01,
 
-    # Technical (10%)
-    'trend_strength': 0.05,
-    'support_resistance': 0.05,
+    # Technical (8%)
+    'trend_strength': 0.04,
+    'support_resistance': 0.04,
 
-    # Speculative + structural (12%)
-    'congress_score': 0.04,
-    'institutional_flow': 0.04,
-    'debt_trend': 0.02,
-    'margin_trend': 0.02,
-
-    # No fama_value (consistently -0.14 to -0.23 IC in both regimes).
+    # Speculative + structural (5%)
+    'congress_score': 0.02,
+    'institutional_flow': 0.02,
+    'debt_trend': 0.01,
 }  # Total: 1.00
 
 LONG_TERM_WEIGHTS = {
@@ -156,44 +174,47 @@ LONG_TERM_WEIGHTS = {
     # macro overlay maintained positive IC across both regimes.
     # Build LT around robust factors; keep quality as moderate weight.
 
-    # Momentum (25%) — robust positive across regimes
-    'momentum_6m': 0.10,
-    'fama_momentum': 0.10,
-    'sector_rs': 0.05,
+    # ============= LP-SPECIFIC SIGNALS (NEW v6) =============
+    # Structural / multi-year — drives LP differentiation. ROIC trend
+    # (improving vs declining), debt maturity risk, market breadth.
+    'roic_trend_score': 0.06,           # 5-year ROIC trajectory
+    'debt_maturity_risk_score': 0.04,   # refinancing pressure proxy
+    'market_breadth_score': 0.03,       # % of sectors > 50sma
+    'sector_rotation_score': 0.04,      # sector tailwind alignment
 
-    # Quality (30%) — strong train, neutral OOS — keep meaningful but smaller
+    # Momentum (20%) — robust positive across regimes
+    'momentum_6m': 0.08,
+    'fama_momentum': 0.08,
+    'sector_rs': 0.04,
+
+    # Quality (28%) — strong train, neutral OOS — keep meaningful but smaller
     'roe': 0.08,
     'roic': 0.06,
-    'fama_quality': 0.06,
+    'fama_quality': 0.05,
     'fcf_quality': 0.05,
-    'moat_score': 0.05,
+    'moat_score': 0.04,
 
-    # Stability (17%)
-    'debt_ebitda': 0.05,
+    # Stability (15%)
+    'debt_ebitda': 0.04,
     'interest_coverage': 0.04,
-    'dividend_stability': 0.04,
+    'dividend_stability': 0.03,
     'margin_stability': 0.02,
     'earnings_stability': 0.02,
 
-    # MACRO OVERLAY (12%) — robust positive, boost for regime exposure
-    'macro_overlay': 0.04,
+    # MACRO OVERLAY (10%) — slight reduction (per-ticker structural takes priority)
+    'macro_overlay': 0.03,
     'macro_sector_impact': 0.04,
-    'macro_regime_boost': 0.04,
+    'macro_regime_boost': 0.03,
 
-    # Speculative (8%)
-    'congress_long_term': 0.04,
+    # Speculative (6%)
+    'congress_long_term': 0.03,
     'insider_activity': 0.02,
-    'vix_regime': 0.02,
+    'vix_regime': 0.01,
 
-    # Value anchor (8%) — small; pe_percentile alone had -0.12 IC. Use only
-    # for regime change protection.
-    'pe_percentile': 0.02,
-    'fcf_yield': 0.03,
-    'peg_ratio': 0.02,
-    'quality_gate': 0.01,
-
-    # Drop fama_value (-0.14 train / -0.23 OOS), ev_ebitda_percentile (-0.21),
-    # pb_percentile (-0.05), mean_reversion (noisy at LT).
+    # Value anchor (4%) — small; pe_percentile alone had -0.12 IC.
+    'pe_percentile': 0.01,
+    'fcf_yield': 0.02,
+    'peg_ratio': 0.01,
 }  # Total: 1.00
 
 
@@ -406,12 +427,14 @@ def _weighted_score(components: Dict[str, float], weights: Dict[str, float], amp
     """
     sig_weighted_sum = 0.0
     sig_weight = 0.0
+    non_sig_weight = 0.0
     for factor, weight in weights.items():
         if factor not in components:
             continue
         val = components[factor]
         # Treat values within ±0.5 of 50 as "no signal" (most defaults sit at 50.0)
         if abs(val - 50) < 0.5:
+            non_sig_weight += weight
             continue
         sig_weighted_sum += val * weight
         sig_weight += weight
@@ -420,9 +443,16 @@ def _weighted_score(components: Dict[str, float], weights: Dict[str, float], amp
         return 50.0
 
     raw_avg = sig_weighted_sum / sig_weight  # weighted average of signaling factors
-    # Blend: 70% effective-weight (high-conviction), 30% full-weight (anchors)
-    full_sum = sum(components.get(f, 50) * w for f, w in weights.items())
-    blended = raw_avg * 0.7 + full_sum * 0.3
+    # Anchor: signaling coverage. When most factors signal, trust the avg.
+    # When few signal, blend slightly toward neutral to avoid overreacting to
+    # a single extreme factor.
+    total_weight = sig_weight + non_sig_weight
+    coverage = sig_weight / total_weight if total_weight > 0 else 1.0
+    # coverage 1.0 -> full trust in avg
+    # coverage 0.5 -> mix 0.7 avg + 0.3 neutral
+    # coverage 0.2 -> mix 0.5 avg + 0.5 neutral (extreme caution)
+    trust = 0.5 + coverage * 0.5  # 0.5 to 1.0
+    blended = raw_avg * trust + 50 * (1 - trust)
     # Amplify deviation from neutral
     amplified = 50 + (blended - 50) * amplifier
     return max(5, min(95, amplified))
@@ -764,6 +794,19 @@ class MultiHorizonScorer:
         # Direct sector rotation score (0-100)
         components['macro_regime_boost'] = data.get('macro_regime_boost', 50)
 
+        # === NEW v6 — HORIZON-SPECIFIC SHORT-TERM SIGNALS ===
+        # These drive CP differentiation vs MP/LP. All default to 50 (neutral)
+        # in the batch path; enriched per-ticker via get_enriched_scores.
+        # Invert IV percentile so low realized vol = high score (cheap optionality).
+        iv_pct_real = data.get('iv_percentile_realized', 50)
+        components['iv_percentile_realized'] = max(5, min(95, 100 - iv_pct_real))
+        components['pc_ratio_score'] = data.get('pc_ratio_score', 50)
+        components['gex_regime_score'] = data.get('gex_regime_score', 50)
+        components['squeeze_potential_score'] = data.get('squeeze_potential_score', 50)
+        components['catalyst_proximity_score'] = data.get('catalyst_proximity_score', 50)
+        components['credit_risk_score'] = data.get('credit_risk_score', 50)
+        components['sector_rotation_score'] = data.get('sector_rotation_score', 50)
+
         # === FACTOR MODEL (8%) ===
         components['fama_momentum'] = data.get('fama_momentum', 50)
         components['fama_low_vol'] = data.get('fama_low_vol', 50)
@@ -1004,6 +1047,17 @@ class MultiHorizonScorer:
 
         components['congress_score'] = data.get('congress_score', 50)
         components['institutional_flow'] = data.get('institutional_flow', 50)
+
+        # === NEW v6 — HORIZON-SPECIFIC MEDIUM-TERM SIGNALS ===
+        # Drives MP differentiation. Fundamental momentum signals operate on
+        # 3-12 month time scales. Default to 50 in batch; enriched per-ticker
+        # via get_enriched_scores.
+        components['analyst_revisions_score'] = data.get('analyst_revisions_score', 50)
+        components['insider_cluster_score'] = data.get('insider_cluster_score', 50)
+        components['earnings_streak_score'] = data.get('earnings_streak_score', 50)
+        components['roic_trend_score'] = data.get('roic_trend_score', 50)
+        components['sector_rotation_score'] = data.get('sector_rotation_score', 50)
+        components['credit_risk_score'] = data.get('credit_risk_score', 50)
 
         # Apply professional macro regime overrides
         pro_regime = data.get('macro_regime', 'neutral')
@@ -1274,6 +1328,14 @@ class MultiHorizonScorer:
             components['insider_activity'] = 20
         else:
             components['insider_activity'] = 50
+
+        # === NEW v6 — HORIZON-SPECIFIC LONG-TERM SIGNALS ===
+        # Structural / multi-year — drives LP differentiation. Default to 50
+        # in batch; enriched per-ticker via get_enriched_scores.
+        components['roic_trend_score'] = data.get('roic_trend_score', 50)
+        components['debt_maturity_risk_score'] = data.get('debt_maturity_risk_score', 50)
+        components['market_breadth_score'] = data.get('market_breadth_score', 50)
+        components['sector_rotation_score'] = data.get('sector_rotation_score', 50)
 
         # Apply professional macro regime overrides
         pro_regime = data.get('macro_regime', 'neutral')

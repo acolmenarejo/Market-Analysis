@@ -1218,6 +1218,686 @@ def _calc_iv_percentile_from_hist(hist: pd.DataFrame) -> float:
         return 50.0
 
 
+@st.cache_data(ttl=1800)  # 30 min — sector ETFs don't change quickly
+def get_sector_rotation_signals() -> Dict[str, Any]:
+    """Sector rotation indicator from SPDR sector ETF momentum + breadth.
+
+    Computes 3-month relative momentum of each sector ETF vs SPY.
+    Returns dict with per-sector z-scored momentum and overall rotation tilt
+    (growth-leaning, value-leaning, defensive, cyclical).
+
+    Maps to yfinance sector names (e.g. 'Technology' -> XLK score).
+
+    Output keys:
+        sector_scores            : {yfinance_sector: 0-100 score}
+        rotation_tilt            : 'growth' | 'value' | 'defensive' | 'cyclical' | 'mixed'
+        market_breadth_score     : 0-100 (% of sector ETFs above 50-day SMA)
+    """
+    out = {
+        'sector_scores': {},
+        'rotation_tilt': 'mixed',
+        'market_breadth_score': 50.0,
+    }
+
+    # SPDR sector ETFs -> yfinance 'sector' names
+    ETF_TO_SECTOR = {
+        'XLK': 'Technology',
+        'XLF': 'Financial Services',
+        'XLV': 'Healthcare',
+        'XLE': 'Energy',
+        'XLI': 'Industrials',
+        'XLY': 'Consumer Cyclical',
+        'XLP': 'Consumer Defensive',
+        'XLU': 'Utilities',
+        'XLB': 'Basic Materials',
+        'XLRE': 'Real Estate',
+        'XLC': 'Communication Services',
+    }
+    GROWTH_SECTORS = {'Technology', 'Consumer Cyclical', 'Communication Services'}
+    DEFENSIVE_SECTORS = {'Consumer Defensive', 'Utilities', 'Healthcare', 'Real Estate'}
+    VALUE_SECTORS = {'Financial Services', 'Energy', 'Basic Materials'}
+
+    try:
+        tickers = list(ETF_TO_SECTOR.keys()) + ['SPY']
+        data = yf.download(tickers, period='6mo', auto_adjust=True,
+                          group_by='ticker', progress=False, threads=True)
+        if data is None or data.empty:
+            return out
+
+        def _series(sym):
+            try:
+                if data.columns.nlevels > 1 and sym in data.columns.get_level_values(0):
+                    df = data[sym].dropna(how='all')
+                else:
+                    df = data
+                return df['Close'].dropna() if 'Close' in df.columns else None
+            except Exception:
+                return None
+
+        spy = _series('SPY')
+        if spy is None or len(spy) < 63:
+            return out
+
+        # SPY 3M (63-day) return for baseline
+        spy_3m = float((spy.iloc[-1] / spy.iloc[-63] - 1) * 100)
+
+        # Per-sector: 3M return - SPY 3M, then z-score
+        sector_relatives = {}
+        above_50sma_count = 0
+        total_sectors = 0
+        for etf, sec in ETF_TO_SECTOR.items():
+            s = _series(etf)
+            if s is None or len(s) < 63:
+                continue
+            r3m = float((s.iloc[-1] / s.iloc[-63] - 1) * 100)
+            rel = r3m - spy_3m
+            sector_relatives[sec] = rel
+            total_sectors += 1
+            # 50-day SMA breadth
+            if len(s) >= 50:
+                sma50 = float(s.tail(50).mean())
+                if float(s.iloc[-1]) > sma50:
+                    above_50sma_count += 1
+
+        if not sector_relatives:
+            return out
+
+        # Convert relative momentum to 0-100 score
+        rels = list(sector_relatives.values())
+        if len(rels) >= 3:
+            mean_r = sum(rels) / len(rels)
+            std_r = float(np.std(rels)) or 1
+            for sec, rel in sector_relatives.items():
+                z = (rel - mean_r) / std_r
+                # +1z = strong outperformer = ~70 score
+                score = 50 + z * 15
+                out['sector_scores'][sec] = float(max(15, min(85, score)))
+
+        # Rotation tilt: which group is leading
+        def _group_avg(group):
+            vals = [sector_relatives[s] for s in group if s in sector_relatives]
+            return sum(vals) / len(vals) if vals else 0
+        growth_avg = _group_avg(GROWTH_SECTORS)
+        value_avg = _group_avg(VALUE_SECTORS)
+        defensive_avg = _group_avg(DEFENSIVE_SECTORS)
+
+        max_group = max(growth_avg, value_avg, defensive_avg)
+        if max_group < 0.5:  # all roughly even
+            out['rotation_tilt'] = 'mixed'
+        elif growth_avg == max_group and growth_avg > value_avg + 1:
+            out['rotation_tilt'] = 'growth'
+        elif value_avg == max_group and value_avg > growth_avg + 1:
+            out['rotation_tilt'] = 'value'
+        elif defensive_avg == max_group and defensive_avg > 0.5:
+            out['rotation_tilt'] = 'defensive'
+        else:
+            out['rotation_tilt'] = 'cyclical' if (growth_avg + value_avg) / 2 > defensive_avg else 'defensive'
+
+        # Market breadth
+        if total_sectors > 0:
+            out['market_breadth_score'] = float(above_50sma_count / total_sectors * 100)
+    except Exception:
+        pass
+    return out
+
+
+@st.cache_data(ttl=900)
+def get_credit_default_proxy() -> Dict[str, Any]:
+    """Credit default risk proxy from HYG-LQD spread + recent trajectory.
+
+    Without paid CDX/CDS data, we use the HYG (high yield) vs LQD (investment
+    grade) spread as a proxy for systemic credit stress. Widening = recession
+    signal, narrowing = risk-on.
+
+    Output keys:
+        hyg_lqd_ratio        : current price ratio
+        hyg_lqd_z_score      : z-score vs 6m mean (negative = stress)
+        credit_risk_score    : 0-100 (high = less stress = bullish for equities)
+        credit_trajectory    : 'tightening' | 'widening' | 'stable'
+    """
+    out = {
+        'hyg_lqd_ratio': 0.0,
+        'hyg_lqd_z_score': 0.0,
+        'credit_risk_score': 50.0,
+        'credit_trajectory': 'stable',
+    }
+    try:
+        data = yf.download(['HYG', 'LQD'], period='6mo', auto_adjust=True,
+                          group_by='ticker', progress=False, threads=True)
+        if data is None or data.empty:
+            return out
+
+        def _series(sym):
+            try:
+                if data.columns.nlevels > 1 and sym in data.columns.get_level_values(0):
+                    return data[sym]['Close'].dropna()
+                return data['Close'].dropna()
+            except Exception:
+                return None
+
+        hyg = _series('HYG')
+        lqd = _series('LQD')
+        if hyg is None or lqd is None or len(hyg) < 60 or len(lqd) < 60:
+            return out
+
+        # Ratio (HYG / LQD): higher = HY outperforming = less stress
+        ratio = hyg / lqd
+        ratio_now = float(ratio.iloc[-1])
+        ratio_mean = float(ratio.tail(120).mean())
+        ratio_std = float(ratio.tail(120).std()) or 1
+        z = (ratio_now - ratio_mean) / ratio_std
+
+        out['hyg_lqd_ratio'] = round(ratio_now, 4)
+        out['hyg_lqd_z_score'] = round(z, 2)
+
+        # Score: high ratio (z > 0) = HY thriving = bullish equity
+        if z > 1:
+            out['credit_risk_score'] = 75
+        elif z > 0.3:
+            out['credit_risk_score'] = 60
+        elif z < -1:
+            out['credit_risk_score'] = 25  # credit stress
+        elif z < -0.3:
+            out['credit_risk_score'] = 40
+        else:
+            out['credit_risk_score'] = 50
+
+        # Trajectory: 20d change in ratio
+        if len(ratio) >= 21:
+            ratio_chg = (ratio.iloc[-1] / ratio.iloc[-21] - 1) * 100
+            if ratio_chg > 0.5:
+                out['credit_trajectory'] = 'tightening'  # spreads narrowing
+            elif ratio_chg < -0.5:
+                out['credit_trajectory'] = 'widening'
+            else:
+                out['credit_trajectory'] = 'stable'
+    except Exception:
+        pass
+    return out
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_options_signals(ticker: str) -> Dict[str, Any]:
+    """Compute professional options-derived signals for a single ticker.
+
+    All signals are short-term oriented (1-3 months) and used to differentiate
+    the CP horizon from MP/LP in scoring. Cached 15 min because options data
+    is heavy. Returns neutral defaults if Yahoo doesn't have options for the
+    ticker or rate-limits us.
+
+    Output keys (all 0-100 scores or raw values):
+        iv_percentile_realized   : current 20d realized vol vs 1y range (0-100)
+        iv_atm_pct               : ATM IV from nearest expiration (annualized %)
+        skew_25d                 : OTM put IV - OTM call IV (pp; positive=fear)
+        skew_score               : 0-100 score, low=put fear high (bullish contrarian)
+        pc_ratio_oi              : Put/Call OI ratio
+        pc_ratio_score           : 0-100; pc>1.5 = -> high (contrarian bullish)
+        gex_regime               : 'positive' | 'negative' | 'neutral'
+        gex_regime_score         : 0-100 (positive gamma = stable, score~50)
+        squeeze_potential_score  : 0-100, considers short interest + call OI
+        days_to_earnings         : int or None
+        catalyst_proximity_score : 0-100 (closer = higher when IV is cheap)
+        implied_move_pct         : implied 1-month price move from ATM straddle
+    """
+    out = {
+        'iv_percentile_realized': 50.0,
+        'iv_atm_pct': 0.0,
+        'skew_25d': 0.0,
+        'skew_score': 50.0,
+        'pc_ratio_oi': 1.0,
+        'pc_ratio_score': 50.0,
+        'gex_regime': 'neutral',
+        'gex_regime_score': 50.0,
+        'squeeze_potential_score': 50.0,
+        'days_to_earnings': None,
+        'catalyst_proximity_score': 50.0,
+        'implied_move_pct': 0.0,
+    }
+    try:
+        stock = yf.Ticker(ticker)
+        info = _yf_retry(lambda: stock.info) or {}
+        hist = _yf_retry(lambda: stock.history(period='1y')) or pd.DataFrame()
+
+        # === IV PERCENTILE from realized vol ===
+        out['iv_percentile_realized'] = _calc_iv_percentile_from_hist(hist)
+
+        # Current price for ATM calculations
+        price = info.get('currentPrice') or info.get('regularMarketPrice', 0)
+        if not price and not hist.empty:
+            price = float(hist['Close'].iloc[-1])
+        if not price or price <= 0:
+            return out
+
+        # === SHORT INTEREST ===
+        short_pct_float = float(info.get('shortPercentOfFloat') or 0) * 100
+        short_ratio = float(info.get('shortRatio') or 0)  # days to cover
+
+        # === EARNINGS PROXIMITY ===
+        try:
+            from datetime import datetime, timezone, timedelta
+            cal = info.get('earningsDate') or []
+            if isinstance(cal, list) and cal:
+                earn_ts = cal[0]
+                if hasattr(earn_ts, 'timestamp'):
+                    earn_dt = earn_ts
+                else:
+                    earn_dt = pd.Timestamp(earn_ts)
+                now = pd.Timestamp.utcnow()
+                if earn_dt.tz is None:
+                    earn_dt = earn_dt.tz_localize('UTC')
+                dte = int((earn_dt - now).total_seconds() / 86400)
+                if -5 <= dte <= 120:
+                    out['days_to_earnings'] = dte
+        except Exception:
+            pass
+
+        # === OPTIONS CHAIN ANALYSIS ===
+        try:
+            expirations = _yf_retry(lambda: stock.options) or []
+        except Exception:
+            expirations = []
+
+        if not expirations:
+            # No options — derive what we can from the rest
+            out['squeeze_potential_score'] = _calc_squeeze_score(
+                short_pct_float, short_ratio, call_oi=0, price=price)
+            return out
+
+        # Use nearest expiration (or up to 4 for multi-exp analysis)
+        nearest_exp = expirations[0]
+        try:
+            from datetime import datetime
+            exp_dt = pd.Timestamp(nearest_exp)
+            dte_exp = max((exp_dt - pd.Timestamp.utcnow().tz_localize(None)).days, 1)
+        except Exception:
+            dte_exp = 30
+
+        # Aggregate across up to 4 expirations for stability
+        total_call_oi = 0
+        total_put_oi = 0
+        atm_call_ivs = []
+        atm_put_ivs = []
+        otm_call_ivs = []
+        otm_put_ivs = []
+        net_gex = 0.0
+        atm_call_price = 0.0
+        atm_put_price = 0.0
+
+        for exp_idx, exp in enumerate(expirations[:4]):
+            try:
+                chain = _yf_retry(lambda: stock.option_chain(exp))
+                if chain is None:
+                    continue
+                calls = chain.calls.copy()
+                puts = chain.puts.copy()
+                for df in (calls, puts):
+                    for col in ('openInterest', 'volume', 'impliedVolatility'):
+                        if col in df.columns:
+                            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+                total_call_oi += int(calls['openInterest'].sum())
+                total_put_oi += int(puts['openInterest'].sum())
+
+                # ATM IV (within ±2% of spot)
+                atm_lo, atm_hi = price * 0.98, price * 1.02
+                _atm_calls = calls[(calls['strike'] >= atm_lo) & (calls['strike'] <= atm_hi)]
+                _atm_puts = puts[(puts['strike'] >= atm_lo) & (puts['strike'] <= atm_hi)]
+                if not _atm_calls.empty:
+                    atm_call_ivs.append(float(_atm_calls['impliedVolatility'].mean()))
+                    if exp_idx == 0 and 'lastPrice' in _atm_calls.columns:
+                        # Use the strike nearest to spot
+                        idx_near = (_atm_calls['strike'] - price).abs().idxmin()
+                        atm_call_price = float(_atm_calls.loc[idx_near, 'lastPrice'] or 0)
+                if not _atm_puts.empty:
+                    atm_put_ivs.append(float(_atm_puts['impliedVolatility'].mean()))
+                    if exp_idx == 0 and 'lastPrice' in _atm_puts.columns:
+                        idx_near = (_atm_puts['strike'] - price).abs().idxmin()
+                        atm_put_price = float(_atm_puts.loc[idx_near, 'lastPrice'] or 0)
+
+                # OTM 25Δ skew proxy (5-10% OTM)
+                _otm_puts = puts[(puts['strike'] < price * 0.95) & (puts['strike'] >= price * 0.90)]
+                _otm_calls = calls[(calls['strike'] > price * 1.05) & (calls['strike'] <= price * 1.10)]
+                if not _otm_puts.empty:
+                    otm_put_ivs.append(float(_otm_puts['impliedVolatility'].mean()))
+                if not _otm_calls.empty:
+                    otm_call_ivs.append(float(_otm_calls['impliedVolatility'].mean()))
+
+                # Simple gamma proxy: OI weighted by distance from spot
+                # (negative gamma when puts dominate near spot, positive when balanced)
+                for _, row in calls.iterrows():
+                    s = float(row['strike'])
+                    oi = float(row.get('openInterest', 0))
+                    if 0 < s < price * 2 and oi > 0:
+                        # Approximate: closer to spot = more gamma; calls add positive gamma to dealers
+                        weight = max(0, 1 - abs(s - price) / (price * 0.1))
+                        net_gex += oi * weight * 100  # 100 shares per contract
+                for _, row in puts.iterrows():
+                    s = float(row['strike'])
+                    oi = float(row.get('openInterest', 0))
+                    if 0 < s < price * 2 and oi > 0:
+                        weight = max(0, 1 - abs(s - price) / (price * 0.1))
+                        net_gex -= oi * weight * 100  # puts add negative gamma to dealers
+            except Exception:
+                continue
+
+        # ATM IV %
+        if atm_call_ivs or atm_put_ivs:
+            all_atm = atm_call_ivs + atm_put_ivs
+            out['iv_atm_pct'] = round(float(np.mean(all_atm)) * 100, 1)
+
+        # 25Δ skew (OTM put IV - OTM call IV)
+        if otm_put_ivs and otm_call_ivs:
+            put_iv_pct = float(np.mean(otm_put_ivs)) * 100
+            call_iv_pct = float(np.mean(otm_call_ivs)) * 100
+            skew = put_iv_pct - call_iv_pct
+            out['skew_25d'] = round(skew, 2)
+            # Score: high put skew = fear in mkt = contrarian bullish opportunity
+            # Negative skew (calls bid up) = greed, less contrarian value
+            if skew > 8:
+                out['skew_score'] = 70  # extreme fear -> contrarian bullish
+            elif skew > 4:
+                out['skew_score'] = 60
+            elif skew < -3:
+                out['skew_score'] = 30  # call bid (speculative) -> bearish contrarian
+            elif skew < 0:
+                out['skew_score'] = 40
+            else:
+                out['skew_score'] = 50
+
+        # Put/Call OI ratio
+        if total_call_oi > 0:
+            pc = total_put_oi / total_call_oi
+            out['pc_ratio_oi'] = round(pc, 2)
+            # Contrarian: very high P/C = fear at extreme = bullish setup
+            if pc > 1.5:
+                out['pc_ratio_score'] = 70
+            elif pc > 1.1:
+                out['pc_ratio_score'] = 60
+            elif pc < 0.5:
+                out['pc_ratio_score'] = 30  # complacency
+            elif pc < 0.7:
+                out['pc_ratio_score'] = 40
+            else:
+                out['pc_ratio_score'] = 50
+
+        # GEX regime (very simplified — net gamma sign)
+        if net_gex > 0:
+            out['gex_regime'] = 'positive'
+            out['gex_regime_score'] = 55  # stabilizing, slight bullish bias
+        elif net_gex < -100000:
+            out['gex_regime'] = 'negative'
+            out['gex_regime_score'] = 35  # volatility amplification, could break either way
+        else:
+            out['gex_regime'] = 'neutral'
+            out['gex_regime_score'] = 50
+
+        # Implied move from ATM straddle (1-period to expiration)
+        if atm_call_price > 0 and atm_put_price > 0:
+            straddle = atm_call_price + atm_put_price
+            out['implied_move_pct'] = round((straddle / price) * 100, 1)
+
+        # === SQUEEZE POTENTIAL ===
+        out['squeeze_potential_score'] = _calc_squeeze_score(
+            short_pct_float, short_ratio, total_call_oi, price)
+
+        # === CATALYST PROXIMITY ===
+        # IV cheap + earnings near = high opportunity for directional bets
+        if out['days_to_earnings'] is not None and 0 <= out['days_to_earnings'] <= 45:
+            iv_pct = out['iv_percentile_realized']
+            # Lower IV percentile + closer earnings = higher score
+            base = 60 if out['days_to_earnings'] <= 21 else 55
+            if iv_pct < 30:
+                out['catalyst_proximity_score'] = base + 15  # cheap optionality near catalyst
+            elif iv_pct < 50:
+                out['catalyst_proximity_score'] = base + 5
+            elif iv_pct > 70:
+                out['catalyst_proximity_score'] = base - 10  # expensive, market expecting fireworks
+            else:
+                out['catalyst_proximity_score'] = base
+        elif out['days_to_earnings'] is not None and out['days_to_earnings'] < 0:
+            # Just reported — post-earnings drift potential
+            out['catalyst_proximity_score'] = 55
+    except Exception:
+        pass
+    return out
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_fundamental_momentum_signals(ticker: str) -> Dict[str, Any]:
+    """Medium-term fundamental momentum signals — analyst revisions, insider
+    clustering, refinancing wall, earnings momentum trajectory.
+
+    Differentiates MP from CP/LP because these signals operate on quarterly
+    to ~12-month time scales.
+
+    Returns:
+        analyst_revisions_score    : 0-100 from recommendationTrend deltas
+        analyst_revisions_velocity : signed pct change in mean recommendation (90d proxy)
+        insider_cluster_score      : 0-100, more buyers + larger size = higher
+        insider_net_buys           : count(buys) - count(sells) last 6m
+        roic_trend_score           : 0-100, improving roic = higher
+        roic_trend                 : 'improving' | 'stable' | 'declining'
+        earnings_surprise_streak   : count of consecutive positive surprises
+        earnings_streak_score      : 0-100
+        debt_maturity_risk_score   : 0-100, lower = more refinancing pressure
+    """
+    out = {
+        'analyst_revisions_score': 50.0,
+        'analyst_revisions_velocity': 0.0,
+        'insider_cluster_score': 50.0,
+        'insider_net_buys': 0,
+        'roic_trend_score': 50.0,
+        'roic_trend': 'stable',
+        'earnings_surprise_streak': 0,
+        'earnings_streak_score': 50.0,
+        'debt_maturity_risk_score': 50.0,
+    }
+    try:
+        stock = yf.Ticker(ticker)
+        info = _yf_retry(lambda: stock.info) or {}
+
+        # === ANALYST REVISIONS ===
+        try:
+            rec_trend = _yf_retry(lambda: stock.recommendations_summary)
+            if rec_trend is not None and not rec_trend.empty:
+                # rec_trend rows: period (-3m,-2m,-1m,0m), strongBuy, buy, hold, sell, strongSell
+                rec_trend = rec_trend.head(4).copy()
+                if 'strongBuy' in rec_trend.columns:
+                    rec_trend['bullish'] = rec_trend['strongBuy'] + rec_trend['buy']
+                    rec_trend['bearish'] = rec_trend['sell'] + rec_trend['strongSell']
+                    rec_trend['net'] = rec_trend['bullish'] - rec_trend['bearish']
+                    # Trend: latest period vs 3 months ago
+                    if len(rec_trend) >= 4:
+                        net_now = float(rec_trend['net'].iloc[0])
+                        net_3m = float(rec_trend['net'].iloc[3])
+                        delta = net_now - net_3m
+                        out['analyst_revisions_velocity'] = float(delta)
+                        # Score: +5 net upgrade = strong bullish, -5 = strong bearish
+                        score = 50 + delta * 4
+                        out['analyst_revisions_score'] = float(max(10, min(90, score)))
+        except Exception:
+            pass
+
+        # Target upside as supporting signal
+        try:
+            target_mean = float(info.get('targetMeanPrice') or 0)
+            price = float(info.get('currentPrice') or info.get('regularMarketPrice') or 0)
+            if target_mean > 0 and price > 0:
+                upside = (target_mean / price - 1) * 100
+                # Blend with revisions score
+                if upside > 30:
+                    out['analyst_revisions_score'] = max(out['analyst_revisions_score'], 75)
+                elif upside > 15:
+                    out['analyst_revisions_score'] = max(out['analyst_revisions_score'], 65)
+                elif upside < -15:
+                    out['analyst_revisions_score'] = min(out['analyst_revisions_score'], 30)
+        except Exception:
+            pass
+
+        # === INSIDER CLUSTERING ===
+        try:
+            ins_tx = _yf_retry(lambda: stock.insider_transactions)
+            if ins_tx is not None and not ins_tx.empty:
+                # Last 6 months only
+                if 'Start Date' in ins_tx.columns:
+                    recent = ins_tx[
+                        pd.to_datetime(ins_tx['Start Date'], errors='coerce') >=
+                        pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=180)
+                    ]
+                else:
+                    recent = ins_tx.head(20)
+
+                buys = recent[recent.get('Transaction', '').str.contains('Buy|Purchase', case=False, na=False)] if 'Transaction' in recent.columns else pd.DataFrame()
+                sells = recent[recent.get('Transaction', '').str.contains('Sale|Sell|Disposition', case=False, na=False)] if 'Transaction' in recent.columns else pd.DataFrame()
+
+                n_buys = len(buys)
+                n_sells = len(sells)
+                out['insider_net_buys'] = int(n_buys - n_sells)
+
+                buy_value = float(buys.get('Value', pd.Series(dtype=float)).sum() or 0) if 'Value' in buys.columns else 0
+                sell_value = float(sells.get('Value', pd.Series(dtype=float)).sum() or 0) if 'Value' in sells.columns else 0
+                net_value = buy_value - sell_value
+
+                # Score: 3+ insiders buying with net $ > 0 = strong signal
+                score = 50
+                if n_buys >= 5 and net_value > 0:
+                    score = 80  # cluster + dollar net positive
+                elif n_buys >= 3 and net_value > 0:
+                    score = 70
+                elif n_buys > n_sells and n_buys >= 2:
+                    score = 60
+                elif n_sells >= 5 and net_value < 0:
+                    score = 25  # cluster of selling
+                elif n_sells > n_buys:
+                    score = 40
+                out['insider_cluster_score'] = float(score)
+        except Exception:
+            pass
+
+        # === ROIC TREND (multi-year) ===
+        try:
+            income = _yf_retry(lambda: stock.income_stmt)
+            bs = _yf_retry(lambda: stock.balance_sheet)
+            if income is not None and bs is not None and not income.empty and not bs.empty:
+                # Compute ROIC for each year: NOPAT / Invested Capital
+                roic_yrs = []
+                cols = list(income.columns)[:4]  # up to 4 years
+                for col in cols:
+                    try:
+                        op_inc = income.loc['Operating Income', col] if 'Operating Income' in income.index else None
+                        tax_rate = 0.21  # assume 21% corp tax
+                        nopat = op_inc * (1 - tax_rate) if op_inc else None
+                        if col in bs.columns:
+                            equity = bs.loc['Stockholders Equity', col] if 'Stockholders Equity' in bs.index else 0
+                            debt = bs.loc['Total Debt', col] if 'Total Debt' in bs.index else 0
+                            invested = (equity or 0) + (debt or 0)
+                            if nopat and invested and invested > 0:
+                                roic = (nopat / invested) * 100
+                                roic_yrs.append(float(roic))
+                    except Exception:
+                        continue
+                if len(roic_yrs) >= 3:
+                    # Trend: latest (idx 0) vs avg of older
+                    latest = roic_yrs[0]
+                    older_avg = sum(roic_yrs[1:]) / max(len(roic_yrs) - 1, 1)
+                    if latest > older_avg * 1.15:
+                        out['roic_trend'] = 'improving'
+                        out['roic_trend_score'] = 75
+                    elif latest < older_avg * 0.85:
+                        out['roic_trend'] = 'declining'
+                        out['roic_trend_score'] = 30
+                    else:
+                        out['roic_trend'] = 'stable'
+                        out['roic_trend_score'] = 55 if latest > 10 else 45
+        except Exception:
+            pass
+
+        # === EARNINGS SURPRISE STREAK ===
+        try:
+            earn_hist = _yf_retry(lambda: stock.earnings_history)
+            if earn_hist is not None and not earn_hist.empty:
+                # Count consecutive positive surprises from most recent
+                streak = 0
+                if 'epsActual' in earn_hist.columns and 'epsEstimate' in earn_hist.columns:
+                    for _, row in earn_hist.head(8).iterrows():
+                        try:
+                            actual = float(row['epsActual'])
+                            est = float(row['epsEstimate'])
+                            if actual > est:
+                                streak += 1
+                            else:
+                                break
+                        except (TypeError, ValueError):
+                            break
+                out['earnings_surprise_streak'] = streak
+                # Score by streak length
+                if streak >= 4:
+                    out['earnings_streak_score'] = 80
+                elif streak >= 3:
+                    out['earnings_streak_score'] = 70
+                elif streak >= 2:
+                    out['earnings_streak_score'] = 60
+                elif streak == 1:
+                    out['earnings_streak_score'] = 55
+                else:
+                    out['earnings_streak_score'] = 35  # missed last quarter
+        except Exception:
+            pass
+
+        # === DEBT MATURITY RISK ===
+        # Proxy: high D/E + low cash / debt = refinancing pressure
+        try:
+            d2e = float(info.get('debtToEquity') or 0)
+            total_debt = float(info.get('totalDebt') or 0)
+            total_cash = float(info.get('totalCash') or 0)
+            ebitda = float(info.get('ebitda') or 1)
+            cash_to_debt = total_cash / max(total_debt, 1)
+            debt_to_ebitda = total_debt / max(ebitda, 1)
+            score = 60
+            if cash_to_debt < 0.1 and debt_to_ebitda > 4:
+                score = 25  # high refinancing risk
+            elif cash_to_debt < 0.2 and debt_to_ebitda > 3:
+                score = 40
+            elif cash_to_debt > 0.5 or debt_to_ebitda < 1.5:
+                score = 75
+            out['debt_maturity_risk_score'] = float(score)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return out
+
+
+def _calc_squeeze_score(short_pct_float: float, short_ratio: float,
+                       call_oi: int, price: float) -> float:
+    """Score 0-100 for short-squeeze potential.
+
+    Inputs:
+      short_pct_float : % of float sold short (yfinance shortPercentOfFloat * 100)
+      short_ratio     : days to cover (yfinance shortRatio)
+      call_oi         : aggregate near-term call OI
+      price           : current price
+
+    Heuristic:
+      - SI > 25% of float + DTC > 5 days = setup
+      - Call OI accumulating near spot adds fuel
+    """
+    score = 50
+    if short_pct_float > 30:
+        score += 25
+    elif short_pct_float > 20:
+        score += 15
+    elif short_pct_float > 10:
+        score += 7
+    if short_ratio > 7:
+        score += 10
+    elif short_ratio > 4:
+        score += 5
+    if call_oi > 50000 and short_pct_float > 15:
+        score += 10  # fuel for squeeze
+    return float(max(5, min(95, score)))
+
+
 @st.cache_data(ttl=600)
 def _get_vix_level() -> float:
     """Get current VIX level."""
@@ -2352,6 +3032,17 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
         except Exception:
             _macro_regime = 'neutral'
 
+        # SHARED macro signals computed ONCE for the whole batch (these are
+        # NOT per-ticker so it's cheap and gives horizon-specific tilt):
+        # - Sector rotation: which sectors are leading -> bullish for matching
+        # - Credit default proxy: HYG/LQD spread -> systemic risk
+        try:
+            _sector_rot = get_sector_rotation_signals()
+            _credit_proxy = get_credit_default_proxy()
+        except Exception:
+            _sector_rot = {'sector_scores': {}, 'rotation_tilt': 'mixed', 'market_breadth_score': 50}
+            _credit_proxy = {'credit_risk_score': 50, 'credit_trajectory': 'stable'}
+
         # Cross-sectional factor ranks (Fama-French).
         # Large batches compute and CACHE into session state. Small batches
         # (e.g. single-ticker trade page) reuse the universe cache so the
@@ -2739,6 +3430,25 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                     'fama_low_vol': _cs.get('fama_low_vol', 50),
                     'fama_value': _cs.get('fama_value', 50),
                     'fama_quality': _cs.get('fama_quality', 50),
+                    # ===== SHARED MACRO PROXIES (cheap, batch-wide) =====
+                    'sector_rotation_score': _sector_rot.get('sector_scores', {}).get(sector, 50),
+                    'rotation_tilt': _sector_rot.get('rotation_tilt', 'mixed'),
+                    'market_breadth_score': _sector_rot.get('market_breadth_score', 50),
+                    'credit_risk_score': _credit_proxy.get('credit_risk_score', 50),
+                    'credit_trajectory': _credit_proxy.get('credit_trajectory', 'stable'),
+                    # ===== PER-TICKER signals (defaults in batch, real in
+                    # individual ticker via enrich_scoring_data) =====
+                    'iv_percentile_realized': 50,
+                    'skew_score': 50,
+                    'pc_ratio_score': 50,
+                    'gex_regime_score': 50,
+                    'squeeze_potential_score': 50,
+                    'catalyst_proximity_score': 50,
+                    'analyst_revisions_score': 50,
+                    'insider_cluster_score': 50,
+                    'roic_trend_score': 50,
+                    'earnings_streak_score': 50,
+                    'debt_maturity_risk_score': 50,
                 }
 
                 result = scorer.calculate_all_horizons(scoring_data)
@@ -3629,6 +4339,178 @@ def _get_fallback_risk_data() -> Dict[str, Any]:
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
+def get_enriched_scores(ticker: str) -> Dict[str, Any]:
+    """Compute scores for a single ticker with FULL per-ticker enrichment.
+
+    Used by the trade detail page and `get_score_explanation` to get the
+    most differentiated CP/MP/LP scores by including:
+      - Options-derived signals (IV%, skew, P/C OI, GEX, squeeze, catalyst)
+      - Fundamental momentum signals (analyst revisions, insider cluster,
+        ROIC trend, earnings streak, debt maturity risk)
+      - Shared macro proxies (sector rotation, credit risk)
+
+    This is much heavier than the batch path (one ticker = 5-15s) but
+    provides the deep horizon differentiation a trader needs.
+    """
+    from webapp.scoring.multi_horizon import MultiHorizonScorer
+
+    # 1) Pull the batch row for this ticker (fast, mostly cached)
+    base_df = get_multi_horizon_scores([ticker])
+    if base_df.empty:
+        return {'error': 'No base scores available'}
+    base_row = base_df.iloc[0].to_dict()
+
+    # 2) Get heavy per-ticker signals (cached 15-60 min each)
+    try:
+        opt_sig = get_options_signals(ticker)
+    except Exception:
+        opt_sig = {}
+    try:
+        fund_mom = get_fundamental_momentum_signals(ticker)
+    except Exception:
+        fund_mom = {}
+
+    # 3) Rebuild scoring_data with enriched signals — we need to call the
+    # scorer directly with the new inputs
+    stock_data = get_stock_data(ticker)
+    if 'error' in stock_data:
+        return {'error': stock_data['error']}
+
+    # Pull fields needed to rebuild scoring_data
+    info = stock_data.get('info', {})
+    hist = stock_data.get('history')
+
+    # Recompute the small set of derived fields the scorer reads
+    rsi = stock_data.get('rsi', 50)
+    macd_bullish = stock_data.get('macd_bullish', False)
+    macd_signal = 'bullish' if macd_bullish else 'bearish'
+    mom_1m = stock_data.get('momentum_1m', 0)
+    mom_3m = stock_data.get('momentum_3m', 0)
+    if mom_1m > 3:
+        macd_signal = 'bullish_cross' if macd_bullish else 'bearish'
+    if mom_1m < -3:
+        macd_signal = 'bearish_cross' if not macd_bullish else 'bullish'
+
+    # Build enriched scoring_data
+    sd = {
+        'ticker': ticker,
+        'price': stock_data.get('price', 0),
+        'vwap': stock_data.get('vwap', 0),
+        'rsi_14': rsi,
+        'macd_signal': macd_signal,
+        'bollinger_position': 50,
+        'volume_ratio': stock_data.get('volume_ratio', 1),
+        'momentum_1w': 0,
+        'momentum_1m': mom_1m,
+        'momentum_3m': mom_3m,
+        'momentum_6m': mom_3m * 2,  # rough proxy
+        'pe_ratio': stock_data.get('pe_ratio', 0) or 0,
+        'pb_ratio': stock_data.get('pb_ratio', 0) or 0,
+        'ev_ebitda': stock_data.get('ev_ebitda', 0) or 0,
+        'roe': stock_data.get('roe', 0) or 0,
+        'roic': stock_data.get('roa', 0) or 0,
+        'profit_margin': stock_data.get('profit_margin', 0) or 0,
+        'gross_margin': stock_data.get('gross_margin', 0) or 0,
+        'operating_margin': stock_data.get('operating_margin', 0) or 0,
+        'debt_to_equity': stock_data.get('debt_to_equity', 0) or 0,
+        'current_ratio': stock_data.get('current_ratio', 0) or 0,
+        'sector': stock_data.get('sector', 'N/A'),
+        'sector_pe_median': base_row.get('sector_pe_median', 20),
+        # === ENRICHED SIGNALS — OPTIONS (drive CP) ===
+        'iv_percentile_realized': opt_sig.get('iv_percentile_realized', 50),
+        'iv_percentile': opt_sig.get('iv_percentile_realized', 50),
+        'skew_score': opt_sig.get('skew_score', 50),
+        'pc_ratio_score': opt_sig.get('pc_ratio_score', 50),
+        'gex_regime_score': opt_sig.get('gex_regime_score', 50),
+        'squeeze_potential_score': opt_sig.get('squeeze_potential_score', 50),
+        'catalyst_proximity_score': opt_sig.get('catalyst_proximity_score', 50),
+        'days_to_earnings': opt_sig.get('days_to_earnings'),
+        'options_flow': 'bullish' if opt_sig.get('skew_score', 50) > 60 else (
+            'bearish' if opt_sig.get('skew_score', 50) < 40 else 'neutral'),
+        # === ENRICHED SIGNALS — FUNDAMENTAL MOMENTUM (drive MP) ===
+        'analyst_revisions_score': fund_mom.get('analyst_revisions_score', 50),
+        'analyst_revisions': fund_mom.get('analyst_revisions_velocity', 0),
+        'insider_cluster_score': fund_mom.get('insider_cluster_score', 50),
+        'insider_activity': 'buying' if fund_mom.get('insider_cluster_score', 50) > 65 else (
+            'selling' if fund_mom.get('insider_cluster_score', 50) < 40 else 'neutral'),
+        'earnings_streak_score': fund_mom.get('earnings_streak_score', 50),
+        'earnings_surprise': fund_mom.get('earnings_surprise_streak', 0) * 5,
+        # === ENRICHED SIGNALS — STRUCTURAL (drive LP) ===
+        'roic_trend_score': fund_mom.get('roic_trend_score', 50),
+        'roic_trend': fund_mom.get('roic_trend', 'stable'),
+        'debt_maturity_risk_score': fund_mom.get('debt_maturity_risk_score', 50),
+        # Pass through what's already in base_row
+        'macro_composite': base_row.get('macro_composite', 50),
+        'macro_sector_adj': 0,
+        'macro_oil_chg': 0,
+        'macro_vix': 18,
+        'macro_move': 95,
+        'macro_hyg_chg': 0,
+        'macro_spy_chg': 0,
+        'macro_regime_boost': 50,
+        'macro_regime': base_row.get('macro_regime', 'neutral'),
+        'sector_rotation_score': base_row.get('sector_rotation_score', 50),
+        'rotation_tilt': base_row.get('rotation_tilt', 'mixed'),
+        'market_breadth_score': base_row.get('market_breadth_score', 50),
+        'credit_risk_score': base_row.get('credit_risk_score', 50),
+        'credit_trajectory': base_row.get('credit_trajectory', 'stable'),
+        # Misc
+        'congress_score': 50,
+        'news_sentiment': 0,
+        'konkorde_score': 50, 'konkorde_signal': 'neutral',
+        'trendline_score': 50, 'rsi_crossover_score': 50,
+        'konkorde_divergence_score': 50,
+        'vix_regime': 50, 'sector_rs': 50, 'short_interest': 0,
+        'fcf_quality': 50, 'fcf_yield': 0,
+        'fama_momentum': 50, 'fama_low_vol': 50,
+        'fama_value': 50, 'fama_quality': 50,
+        'margin_trend': 0, 'debt_trend': 0,
+        'adx': 25, 'trend_direction': 'neutral',
+        'sr_position': 'middle',
+        'mean_reversion': 50,
+        'peg_ratio': stock_data.get('peg_ratio', 0) or 0,
+        'margin_stability': 50, 'moat_score': 50, 'earnings_stability': 50,
+        'dividend_growth_years': 0,
+        'institutional_flow': 50,
+        'quality_gate': 50,
+        'analyst_revisions_velocity': fund_mom.get('analyst_revisions_velocity', 0),
+        'earnings_momentum': fund_mom.get('earnings_streak_score', 50),
+        'support_resistance': 50,
+        'trend_strength': 50,
+        'fcf_quality_mt': 50,
+        'congress_long_term': 50,
+        'pe_percentile': 50, 'pb_percentile': 50,
+        'ev_ebitda_percentile': 50, 'debt_ebitda': 0,
+        'interest_coverage': 10, 'dividend_stability': 50,
+    }
+
+    scorer = MultiHorizonScorer()
+    result = scorer.calculate_all_horizons(sd)
+    return {
+        'ticker': ticker,
+        'short_term': {
+            'score': round(result.short_term.total_score, 1),
+            'signal': result.short_term.signal.value,
+            'components': result.short_term.components,
+        },
+        'medium_term': {
+            'score': round(result.medium_term.total_score, 1),
+            'signal': result.medium_term.signal.value,
+            'components': result.medium_term.components,
+        },
+        'long_term': {
+            'score': round(result.long_term.total_score, 1),
+            'signal': result.long_term.signal.value,
+            'components': result.long_term.components,
+        },
+        'enrichment': {
+            'options': opt_sig,
+            'fundamental_momentum': fund_mom,
+        },
+    }
+
+
 def get_score_explanation(ticker: str, skip_congress: bool = False, include_options: bool = False) -> Dict[str, Any]:
     """
     Generate a comprehensive explanation of WHY a stock got its score.
