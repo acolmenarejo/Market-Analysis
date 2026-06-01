@@ -713,18 +713,30 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
         if info is None:
             info = {}
 
-        # yfinance .info can come back partial when deeper Yahoo endpoints
-        # are throttled (basic price OK, fundamentals missing). Retry once
-        # with a short delay; if still partial, supplement from the
-        # statements API which sits behind a different rate limiter.
-        if _info_is_partial(info):
+        # yfinance .info can come back partial OR completely empty when
+        # Yahoo's endpoints are throttled (Streamlit Cloud's shared IP is
+        # often heavily rate-limited). Three-level recovery:
+        #   1) Quick retry — sometimes a single 429 clears on retry
+        #   2) Statements-API fallback — uses different rate limiter
+        #   3) Persistent disk cache — last successful fundamentals from
+        #      any prior session
+        if _info_is_partial(info) or _info_is_empty(info):
             import time as _t
             _t.sleep(1.5)
             _retry_info = _yf_retry(lambda: stock.info)
-            if _retry_info is not None and _retry_info.get('returnOnEquity') is not None:
+            if _retry_info is not None and not _info_is_empty(_retry_info):
                 info = _retry_info
         if _info_is_partial(info):
             info = _supplement_from_statements(ticker, info)
+        if _info_is_empty(info):
+            # Full Yahoo failure — try disk cache from a previous successful fetch
+            _cached_funds = _load_fundamentals_cache()
+            if ticker in _cached_funds:
+                info = _cached_funds[ticker]
+
+        # If we DID get a good info dict, persist it for future fallbacks
+        if not _info_is_empty(info) and not _info_is_partial(info):
+            _save_fundamentals_cache(ticker, info)
 
         # Calcular métricas técnicas básicas
         if not hist.empty:
@@ -977,6 +989,96 @@ def _info_is_partial(info: dict) -> bool:
     )
 
 
+def _info_is_empty(info: dict) -> bool:
+    """Return True if yfinance returned essentially no usable info.
+
+    On heavily-throttled environments (e.g. Streamlit Cloud's shared IP)
+    yfinance's deep endpoints fail AND quote_summary also returns nothing,
+    leaving an empty or near-empty dict that ``_info_is_partial`` does not
+    catch (because it requires trailingPE to be present). This helper
+    catches that case so we trigger the statements-API fallback.
+    """
+    if not info:
+        return True
+    # Even basic price-discovery fields missing -> degenerate response
+    has_anything = (
+        info.get('currentPrice') is not None
+        or info.get('regularMarketPrice') is not None
+        or info.get('trailingPE') is not None
+        or info.get('marketCap') is not None
+        or info.get('longName') is not None
+    )
+    return not has_anything
+
+
+# ============================================================================
+# PERSISTENT FUNDAMENTALS CACHE — survives Streamlit restarts and Yahoo throttles
+# ============================================================================
+# Fundamentals change infrequently (quarterly at most). When yfinance returns
+# an empty info dict (Streamlit Cloud shared IP getting throttled), we fall
+# back to the last successful disk-cached snapshot so the user sees real
+# numbers instead of N/A for every field.
+
+FUND_CACHE_FILE = ROOT_DIR / 'data' / 'fundamentals_cache.parquet'
+FUND_CACHE_TTL_HOURS = 24 * 7  # 1 week — fundamentals don't move daily
+
+
+def _load_fundamentals_cache() -> Dict[str, dict]:
+    """Load the persistent fundamentals cache. Returns {ticker: info_dict}."""
+    try:
+        if FUND_CACHE_FILE.exists():
+            df = pd.read_parquet(FUND_CACHE_FILE)
+            if 'cached_at' in df.columns:
+                df['cached_at'] = pd.to_datetime(df['cached_at'])
+                cutoff = pd.Timestamp.utcnow() - pd.Timedelta(hours=FUND_CACHE_TTL_HOURS)
+                df = df[df['cached_at'] >= cutoff]
+            if 'ticker' in df.columns and 'info_json' in df.columns:
+                import json as _json
+                return {
+                    row['ticker']: _json.loads(row['info_json'])
+                    for _, row in df.iterrows()
+                }
+    except Exception as e:
+        print(f"fundamentals cache read error: {e}")
+    return {}
+
+
+def _save_fundamentals_cache(ticker: str, info: dict) -> None:
+    """Persist a single ticker's info dict to the cache (upsert by ticker)."""
+    if not info or _info_is_empty(info):
+        return
+    try:
+        import json as _json
+        FUND_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        # Sanitize info dict to make it JSON-serializable (drop non-primitives)
+        safe_info = {}
+        for k, v in info.items():
+            if isinstance(v, (int, float, str, bool)) or v is None:
+                safe_info[k] = v
+            elif isinstance(v, list):
+                try:
+                    safe_info[k] = [
+                        item for item in v
+                        if isinstance(item, (int, float, str, bool)) or item is None
+                    ]
+                except Exception:
+                    pass
+        new_row = pd.DataFrame([{
+            'ticker': ticker,
+            'info_json': _json.dumps(safe_info),
+            'cached_at': pd.Timestamp.utcnow(),
+        }])
+        if FUND_CACHE_FILE.exists():
+            existing = pd.read_parquet(FUND_CACHE_FILE)
+            combined = pd.concat([existing, new_row], ignore_index=True)
+            combined = combined.drop_duplicates(subset=['ticker'], keep='last')
+        else:
+            combined = new_row
+        combined.to_parquet(FUND_CACHE_FILE, index=False)
+    except Exception as e:
+        print(f"fundamentals cache write error: {e}")
+
+
 def _supplement_from_statements(ticker: str, info: dict) -> dict:
     """Patch missing fundamentals using stock.income_stmt / balance_sheet / cashflow.
 
@@ -1072,6 +1174,20 @@ def _batch_download_info(tickers: List[str]) -> dict:
     partial_tickers = [t for t, info in all_info.items() if _info_is_partial(info)][:30]
     for t in partial_tickers:
         all_info[t] = _supplement_from_statements(t, all_info[t])
+
+    # For empty info dicts (Yahoo fully throttled for that ticker), fall back
+    # to the persistent disk cache so the scoring pass still has fundamentals.
+    empty_tickers = [t for t, info in all_info.items() if _info_is_empty(info)]
+    if empty_tickers:
+        _cached_funds = _load_fundamentals_cache()
+        for t in empty_tickers:
+            if t in _cached_funds:
+                all_info[t] = _cached_funds[t]
+
+    # Persist any GOOD info dicts to disk so the cache grows over time
+    for t, info in all_info.items():
+        if not _info_is_empty(info) and not _info_is_partial(info):
+            _save_fundamentals_cache(t, info)
 
     return all_info
 
