@@ -5298,54 +5298,94 @@ def _show_fundamental_tab(ticker: str, data: dict):
     earnings_growth_rate = data.get('earnings_growth', 0) or 0
     rev_growth_rate = data.get('revenue_growth', 0) or 0
     shares = data.get('shares_outstanding', 0) or 0
+    # Profile flags — the right valuation model depends on the company type
+    is_high_growth = (rev_growth_rate > 20) or (earnings_growth_rate > 20)
+    # FCF/NI ratio captures capex intensity — capex-heavy businesses in
+    # expansion (utilities, REITs, infrastructure) have very low FCF/NI
+    # ratios but strong earning power; a raw-FCF DCF undervalues them.
+    _net_income = 0
+    try:
+        _info_local = data.get('info') or {}
+        _net_income = float(_info_local.get('netIncomeToCommon') or 0)
+    except Exception:
+        pass
+    capex_suppressed = _net_income > 0 and fcf > 0 and (fcf / _net_income) < 0.5
 
     models = []
 
-    # 1. Graham Number: sqrt(22.5 * EPS * Book Value)
-    if eps > 0 and book_val > 0:
+    # 1. Graham Number — only for defensive value names. Skip for high-growth
+    # because the formula assumes near-zero growth and produces phantom
+    # downside (e.g. VST: Graham=$32 vs price $155 with 43% rev growth).
+    if eps > 0 and book_val > 0 and not is_high_growth:
         graham = math.sqrt(22.5 * eps * book_val)
-        models.append(("Graham Number", graham, "sqrt(22.5 x EPS x BV)"))
+        models.append(("Graham Number", graham, "sqrt(22.5 x EPS x BV) — value stocks only"))
 
-    # 2. DCF Simplified (Gordon Growth)
-    if fcf > 0 and shares > 0:
-        growth = min(max(rev_growth_rate / 100, 0.02), 0.15)  # clamp 2-15%
-        discount_rate = 0.10  # 10% WACC
-        terminal_g = 0.025  # 2.5% terminal growth
-        # 5-year explicit + terminal
-        dcf_value = 0
-        current_fcf = fcf
-        for yr in range(1, 6):
-            current_fcf *= (1 + growth)
-            dcf_value += current_fcf / ((1 + discount_rate) ** yr)
-        # Terminal value
-        terminal_val = current_fcf * (1 + terminal_g) / (discount_rate - terminal_g)
-        dcf_value += terminal_val / ((1 + discount_rate) ** 5)
-        dcf_per_share = dcf_value / shares
-        if 0 < dcf_per_share < price * 10:  # sanity check
-            models.append(("DCF (5Y+Terminal)", dcf_per_share, f"g={growth*100:.0f}%, WACC=10%"))
+    # 2. DCF — earnings-based when FCF is suppressed by capex, FCF-based otherwise.
+    # Uses growth DECAY: linear interpolation from current growth toward a
+    # 4% terminal across 5 years, then Gordon perpetuity at terminal.
+    if shares > 0 and (fcf > 0 or fwd_eps > 0):
+        discount_rate = 0.10
+        terminal_g = 0.04
+        g0 = min(max(rev_growth_rate / 100, 0.03), 0.25)  # clamp 3-25%
+        if capex_suppressed and fwd_eps > 0:
+            # Use forward EPS as owners-earnings proxy when capex distorts FCF
+            base_income = fwd_eps  # per-share
+            inc = base_income
+            pv = 0.0
+            for yr in range(1, 6):
+                g_yr = g0 + (terminal_g - g0) * (yr / 5)
+                inc *= (1 + g_yr)
+                pv += inc / ((1 + discount_rate) ** yr)
+            terminal_val = inc * (1 + terminal_g) / (discount_rate - terminal_g)
+            pv += terminal_val / ((1 + discount_rate) ** 5)
+            dcf_per_share = pv
+            desc = f"FwdEPS · decay {g0*100:.0f}%→{terminal_g*100:.0f}% · WACC=10%"
+        elif fcf > 0:
+            base = fcf / shares
+            inc = base
+            pv = 0.0
+            for yr in range(1, 6):
+                g_yr = g0 + (terminal_g - g0) * (yr / 5)
+                inc *= (1 + g_yr)
+                pv += inc / ((1 + discount_rate) ** yr)
+            terminal_val = inc * (1 + terminal_g) / (discount_rate - terminal_g)
+            pv += terminal_val / ((1 + discount_rate) ** 5)
+            dcf_per_share = pv
+            desc = f"FCF · decay {g0*100:.0f}%→{terminal_g*100:.0f}% · WACC=10%"
+        else:
+            dcf_per_share = 0
+            desc = ""
+        if 0 < dcf_per_share < price * 5:  # sanity-cap at 5x (was 10x — too lax)
+            models.append(("DCF (decay 5Y+terminal)", dcf_per_share, desc))
 
-    # 3. Earnings Power Value (EPV)
+    # 3. EPV (Greenwald) — explicitly labeled as "no-growth floor value".
+    # For growth stocks this is below fair value by design; it's the
+    # "if growth stops" downside scenario, not a fair-value estimate.
     if eps > 0:
-        # EPV = Normalized Earnings / Cost of Capital
-        cost_of_equity = 0.08 + (beta - 1) * 0.05  # CAPM-like
-        cost_of_equity = max(cost_of_equity, 0.06)
+        cost_of_equity = max(0.08 + (beta - 1) * 0.05, 0.06)
         epv = eps / cost_of_equity
         if 0 < epv < price * 10:
-            models.append(("EPV (Greenwald)", epv, f"EPS/{cost_of_equity*100:.0f}% CoE"))
+            epv_desc = (f"EPS/{cost_of_equity*100:.0f}% — FLOOR sin crecimiento"
+                        if is_high_growth else f"EPS/{cost_of_equity*100:.0f}% CoE")
+            models.append(("EPV (Greenwald)", epv, epv_desc))
 
-    # 4. Peter Lynch Fair Value (PEG-based)
+    # 4. Peter Lynch Fair Value — useful when earnings growth > 0
     if eps > 0 and earnings_growth_rate > 0:
-        lynch_pe = min(earnings_growth_rate, 25)  # cap PE at growth rate, max 25
+        lynch_pe = min(earnings_growth_rate, 25)
         lynch_val = eps * lynch_pe
-        if lynch_val > 0:
+        if 0 < lynch_val < price * 5:
             models.append(("Lynch Fair Value", lynch_val, f"EPS x Growth({lynch_pe:.0f})"))
 
-    # 5. Reverse DCF (what growth is priced in)
-    if eps > 0 and price > 0:
-        implied_pe = price / eps if eps > 0 else 0
-        # Implied growth from current PE
-        implied_growth = max((implied_pe - 8) / 2, 0)  # rough formula
-        models.append(("Implied Growth", implied_growth, f"P/E={implied_pe:.0f} implica ~{implied_growth:.0f}% CAGR"))
+    # 5. Implied Growth — prefer FORWARD P/E (forward-looking and lower for
+    # companies with improving earnings, e.g. VST trailing 26 / forward 14).
+    if price > 0:
+        pe_for_implied = fwd_eps if fwd_eps > 0 else eps
+        label_pe = "Fwd P/E" if fwd_eps > 0 else "P/E"
+        if pe_for_implied > 0:
+            implied_pe = price / pe_for_implied
+            implied_growth = max((implied_pe - 8) / 2, 0)
+            models.append(("Implied Growth", implied_growth,
+                          f"{label_pe}={implied_pe:.1f} implica ~{implied_growth:.0f}% CAGR"))
 
     if models:
         model_cols = st.columns(min(len(models), 5))
@@ -5388,20 +5428,24 @@ def _show_fundamental_tab(ticker: str, data: dict):
                     interpretations.append(f'<b style="color:#d29922;">Graham Number (&#36;{value:.0f}, {upside:+.0f}%)</b>: Ligero descuento vs valor intrinseco Graham. El margen de seguridad existe pero es reducido.')
                 else:
                     interpretations.append(f'<b style="color:#f85149;">Graham Number (&#36;{value:.0f}, {upside:+.0f}%)</b>: La accion cotiza <b>por encima</b> del valor conservador de Graham. Esto no significa que este cara necesariamente — Graham es muy conservador y no captura crecimiento futuro.')
-            elif name == "DCF (5Y+Terminal)":
+            elif name == "DCF (decay 5Y+terminal)":
                 if upside > 30:
-                    interpretations.append(f'<b style="color:#3fb950;">DCF (&#36;{value:.0f}, {upside:+.0f}%)</b>: El flujo de caja libre descontado a 5 anos + valor terminal ({desc}) sugiere la accion esta <b>muy infravalorada</b>. Asume que el FCF actual crece al ritmo de los ingresos y se descuenta al 10% WACC.')
+                    interpretations.append(f'<b style="color:#3fb950;">DCF (&#36;{value:.0f}, {upside:+.0f}%)</b>: Flujo descontado con decaimiento de growth ({desc}) — la accion esta <b>infravalorada</b> incluso asumiendo decaimiento conservador del crecimiento hacia un terminal del 4%.')
                 elif upside > 0:
-                    interpretations.append(f'<b style="color:#d29922;">DCF (&#36;{value:.0f}, {upside:+.0f}%)</b>: El DCF sugiere un descuento moderado. Los supuestos ({desc}) son conservadores — cambios en la tasa de crecimiento o WACC alteran significativamente el resultado.')
+                    interpretations.append(f'<b style="color:#d29922;">DCF (&#36;{value:.0f}, {upside:+.0f}%)</b>: El DCF con decaimiento ({desc}) sugiere modesto descuento. El resultado depende mucho del WACC y de la velocidad del decay del growth.')
                 else:
-                    interpretations.append(f'<b style="color:#f85149;">DCF (&#36;{value:.0f}, {upside:+.0f}%)</b>: El precio actual ya descuenta un crecimiento superior al estimado. El mercado esta pagando una prima por expectativas de crecimiento futuro o por calidad del negocio.')
+                    interpretations.append(f'<b style="color:#f85149;">DCF (&#36;{value:.0f}, {upside:+.0f}%)</b>: El precio descuenta un crecimiento sostenido superior al modelado. El mercado paga una prima por la trayectoria de crecimiento o por la calidad del negocio.')
             elif name == "EPV (Greenwald)":
-                if upside > 20:
-                    interpretations.append(f'<b style="color:#3fb950;">EPV Greenwald (&#36;{value:.0f}, {upside:+.0f}%)</b>: El Earnings Power Value (beneficios normalizados / coste de capital) sugiere infravaloración. EPV mide el valor <b>sin crecimiento</b> — si hay upside, el mercado no esta pagando por el crecimiento.')
+                # When labelled as FLOOR (growth stock), interpret as downside scenario
+                is_floor = 'FLOOR' in (desc or '')
+                if is_floor:
+                    interpretations.append(f'<b style="color:#8b949e;">EPV Floor (&#36;{value:.0f}, {upside:+.0f}%)</b>: Es el valor <b>sin crecimiento</b> de Greenwald — el suelo teorico si el crecimiento se detuviese hoy. Para una accion en hipercrecimiento, esperar que cotice por encima de este floor es normal. Mide el downside de escenario adverso, no el fair value.')
+                elif upside > 20:
+                    interpretations.append(f'<b style="color:#3fb950;">EPV Greenwald (&#36;{value:.0f}, {upside:+.0f}%)</b>: Beneficios normalizados / coste de capital sugiere infravaloración. EPV mide el valor sin crecimiento — si hay upside, el mercado no esta pagando por el crecimiento.')
                 elif upside < -20:
-                    interpretations.append(f'<b style="color:#f85149;">EPV Greenwald (&#36;{value:.0f}, {upside:+.0f}%)</b>: El precio descuenta <b>mucho crecimiento futuro</b>. Si ese crecimiento no se materializa, hay riesgo de correccion significativa.')
+                    interpretations.append(f'<b style="color:#d29922;">EPV Greenwald (&#36;{value:.0f}, {upside:+.0f}%)</b>: El precio descuenta crecimiento futuro. Si ese crecimiento no se materializa, hay riesgo de correccion.')
                 else:
-                    interpretations.append(f'<b style="color:#d29922;">EPV Greenwald (&#36;{value:.0f}, {upside:+.0f}%)</b>: Precio alineado con el poder de beneficios actual. Rentabilidad futura dependera del crecimiento.')
+                    interpretations.append(f'<b style="color:#d29922;">EPV Greenwald (&#36;{value:.0f}, {upside:+.0f}%)</b>: Precio alineado con el poder de beneficios actual.')
             elif name == "Lynch Fair Value":
                 if upside > 15:
                     interpretations.append(f'<b style="color:#3fb950;">Lynch Fair Value (&#36;{value:.0f}, {upside:+.0f}%)</b>: Segun Peter Lynch, un P/E justo iguala la tasa de crecimiento de beneficios. La accion cotiza por debajo de ese nivel — potencial <b>PEG favorable</b>.')
@@ -5418,8 +5462,12 @@ def _show_fundamental_tab(ticker: str, data: dict):
                 else:
                     interpretations.append(f'<b style="color:#d29922;">Crecimiento implicito: {value:.0f}% CAGR</b> — alineado con el crecimiento actual ({actual_g:.0f}%). Precio razonablemente valorado por este metodo.')
 
-        # Aggregate conclusion
-        price_models = [r for r in model_results if r[0] != "Implied Growth"]
+        # Aggregate conclusion — exclude EPV when it's labelled as "FLOOR" since
+        # that's a downside scenario for growth stocks, not a fair value estimate.
+        # Including it would always make growth stocks look "sobrevalorada".
+        price_models = [r for r in model_results
+                        if r[0] != "Implied Growth"
+                        and not (r[0] == "EPV (Greenwald)" and 'FLOOR' in (r[3] or ''))]
         if price_models:
             avg_upside = sum(r[2] for r in price_models) / len(price_models)
             bullish_count = sum(1 for r in price_models if r[2] > 10)
