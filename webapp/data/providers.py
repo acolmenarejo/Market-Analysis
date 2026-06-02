@@ -732,9 +732,14 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
             # Full Yahoo failure — try disk cache from a previous successful fetch
             _cached_funds = _load_fundamentals_cache()
             if ticker in _cached_funds:
-                info = _cached_funds[ticker]
+                info = dict(_cached_funds[ticker])  # mutate-safe copy
+                # Defensive: strip volatile fields in case an older cache file
+                # was written before _save_fundamentals_cache filtered them.
+                for _volatile in _VOLATILE_FIELDS:
+                    info.pop(_volatile, None)
 
-        # If we DID get a good info dict, persist it for future fallbacks
+        # If we DID get a good info dict, persist it for future fallbacks.
+        # Strip volatile price fields BEFORE caching so they never get reused.
         if not _info_is_empty(info) and not _info_is_partial(info):
             _save_fundamentals_cache(ticker, info)
 
@@ -1043,16 +1048,41 @@ def _load_fundamentals_cache() -> Dict[str, dict]:
     return {}
 
 
+_VOLATILE_FIELDS = frozenset({
+    # Price + 52w + moving averages: change intraday, must never be cached
+    'currentPrice', 'regularMarketPrice', 'previousClose',
+    'regularMarketChange', 'regularMarketChangePercent',
+    'regularMarketOpen', 'regularMarketDayLow', 'regularMarketDayHigh',
+    'bid', 'ask', 'dayLow', 'dayHigh', 'open',
+    'fiftyTwoWeekLow', 'fiftyTwoWeekHigh',
+    'fiftyDayAverage', 'twoHundredDayAverage', 'marketCap',
+    # Volume snapshots
+    'volume', 'regularMarketVolume', 'averageVolume',
+    'averageVolume10days', 'averageDailyVolume10Day',
+    # Forward-looking estimates that can shift
+    'targetMeanPrice', 'targetHighPrice', 'targetLowPrice',
+})
+
+
 def _save_fundamentals_cache(ticker: str, info: dict) -> None:
-    """Persist a single ticker's info dict to the cache (upsert by ticker)."""
+    """Persist a single ticker's info dict to the cache (upsert by ticker).
+
+    Strips price-volatile fields (currentPrice, marketCap, 52w hi/lo, etc.)
+    before persistence so a stale cached row can never serve outdated
+    quotes. Only slow-moving fundamentals (ROE, margins, debt, growth) are
+    cached.
+    """
     if not info or _info_is_empty(info):
         return
     try:
         import json as _json
         FUND_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
         # Sanitize info dict to make it JSON-serializable (drop non-primitives)
+        # AND strip volatile price fields.
         safe_info = {}
         for k, v in info.items():
+            if k in _VOLATILE_FIELDS:
+                continue
             if isinstance(v, (int, float, str, bool)) or v is None:
                 safe_info[k] = v
             elif isinstance(v, list):
