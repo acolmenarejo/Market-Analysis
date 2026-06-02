@@ -338,6 +338,409 @@ def calculate_obv(close: pd.Series, volume: pd.Series) -> pd.Series:
     return (sign * volume.fillna(0)).cumsum()
 
 
+# =============================================================================
+# TICKER SEARCH / AUTOCOMPLETE
+# =============================================================================
+
+@st.cache_data(ttl=3600, show_spinner=False)  # 1h — search results don't change often
+def search_tickers(query: str, limit: int = 8) -> List[Dict[str, str]]:
+    """Search Yahoo Finance for tickers matching the user's query.
+
+    Returns a list of dicts with `symbol`, `name`, `exchange`, `type`.
+    Used for the autocomplete suggestions in the Stock Analysis page.
+
+    Falls back to the local TICKER_UNIVERSE substring match if Yahoo is
+    rate-limited or returns nothing, so the user always gets suggestions.
+    """
+    query = (query or '').strip()
+    if len(query) < 1:
+        return []
+
+    out = []
+    # 1) Try Yahoo's official search endpoint
+    try:
+        import requests
+        resp = requests.get(
+            'https://query2.finance.yahoo.com/v1/finance/search',
+            params={'q': query, 'quotesCount': limit, 'newsCount': 0,
+                    'enableFuzzyQuery': 'true'},
+            headers={'User-Agent': 'Mozilla/5.0'},
+            timeout=3,
+        )
+        if resp.ok:
+            data = resp.json()
+            for q in (data.get('quotes') or [])[:limit]:
+                sym = q.get('symbol')
+                if not sym:
+                    continue
+                out.append({
+                    'symbol': sym,
+                    'name': q.get('shortname') or q.get('longname') or sym,
+                    'exchange': q.get('exchDisp', '') or q.get('exchange', ''),
+                    'type': q.get('quoteType', ''),
+                })
+    except Exception:
+        pass
+
+    # 2) Local fallback — substring match on the TICKER_UNIVERSE
+    if not out:
+        try:
+            from webapp.config import TICKER_UNIVERSE
+            q_upper = query.upper()
+            for t in TICKER_UNIVERSE:
+                if q_upper in t.upper():
+                    out.append({'symbol': t, 'name': t, 'exchange': '', 'type': 'EQUITY'})
+                    if len(out) >= limit:
+                        break
+        except Exception:
+            pass
+
+    return out
+
+
+# =============================================================================
+# COMPANY LOGOS — multi-source with fallback chain
+# =============================================================================
+
+@st.cache_data(ttl=86400, show_spinner=False)  # 24h — logos don't change
+def get_company_logo_url(ticker: str, website: str = '') -> Optional[str]:
+    """Return a logo URL for `ticker` or None if unavailable.
+
+    Tries (in order):
+      1. Clearbit (free) using domain extracted from website
+      2. financialmodelingprep public CDN by ticker
+      3. None — caller should fall back to a default icon
+    """
+    # 1) Clearbit needs a domain — extract from website URL
+    if website:
+        try:
+            from urllib.parse import urlparse
+            domain = urlparse(website if website.startswith('http') else f'https://{website}').netloc
+            if domain:
+                # Remove www. if present
+                domain = domain.replace('www.', '').strip('/')
+                if domain:
+                    url = f"https://logo.clearbit.com/{domain}"
+                    # quick HEAD check
+                    try:
+                        import requests
+                        r = requests.head(url, timeout=2, allow_redirects=True)
+                        if r.status_code == 200:
+                            return url
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    # 2) FMP public logo CDN (no API key, hotlink-friendly)
+    fmp_url = f"https://financialmodelingprep.com/image-stock/{ticker.upper()}.png"
+    try:
+        import requests
+        r = requests.head(fmp_url, timeout=2, allow_redirects=True)
+        if r.status_code == 200:
+            return fmp_url
+    except Exception:
+        pass
+
+    return None
+
+
+# =============================================================================
+# DIGITAL ASSET TREASURY (DAT) DETECTION & mNAV
+# =============================================================================
+# A DAT (Digital Asset Treasury) company is one whose primary equity story is
+# its crypto/asset holdings, not operating cash flow (e.g. MicroStrategy holds
+# BTC; PURR holds HYPE token). Traditional fundamentals (ROE, FCF, P/E)
+# under-price these stocks. The right valuation metric is mNAV =
+# Market Cap / Net Asset Value of treasury holdings. Premium-to-NAV reflects
+# market's pricing of yield (e.g. HYPE staking returns) + management premium +
+# speculative interest.
+#
+# Each entry maps a ticker to (asset_symbol, asset_holdings, asset_yfinance_proxy).
+# - asset_symbol: human-readable
+# - asset_holdings: count of tokens/coins (updated periodically)
+# - asset_yfinance_proxy: ticker that approximates the asset's USD price
+#   (BTC-USD, ETH-USD for actual yfinance availability; for tokens not on
+#   yfinance, set to None and we skip NAV calc)
+
+DAT_COMPANIES = {
+    # Bitcoin treasury (most established)
+    'MSTR': {'asset': 'BTC', 'holdings': 444262, 'price_ticker': 'BTC-USD',
+             'desc': 'MicroStrategy — largest corporate BTC holder', 'updated': '2026-04-01'},
+    # Hyperliquid Strategies — holds HYPE token
+    # HYPE isn't on yfinance; use CoinGecko (id='hyperliquid') as price source.
+    'PURR': {'asset': 'HYPE', 'holdings': 20_000_000, 'price_ticker': None,
+             'coingecko_id': 'hyperliquid',
+             'desc': 'Hyperliquid Strategies — DAT for HYPE token', 'updated': '2026-04-29'},
+    # Other notable DAT-style stocks
+    'COIN': {'asset': 'Mixed crypto', 'holdings': 0, 'price_ticker': None,
+             'desc': 'Coinbase — exchange + crypto holdings', 'updated': '2026-04-01'},
+    'MARA': {'asset': 'BTC mined', 'holdings': 47531, 'price_ticker': 'BTC-USD',
+             'desc': 'Marathon Digital — BTC mining + treasury', 'updated': '2026-04-01'},
+    'RIOT': {'asset': 'BTC mined', 'holdings': 16728, 'price_ticker': 'BTC-USD',
+             'desc': 'Riot Platforms — BTC mining + treasury', 'updated': '2026-04-01'},
+    'CLSK': {'asset': 'BTC mined', 'holdings': 10870, 'price_ticker': 'BTC-USD',
+             'desc': 'CleanSpark — BTC mining + treasury', 'updated': '2026-04-01'},
+    'HUT':  {'asset': 'BTC mined', 'holdings': 10460, 'price_ticker': 'BTC-USD',
+             'desc': 'Hut 8 Mining — BTC mining + treasury', 'updated': '2026-04-01'},
+    'BITF': {'asset': 'BTC mined', 'holdings': 1428, 'price_ticker': 'BTC-USD',
+             'desc': 'Bitfarms — BTC mining + treasury', 'updated': '2026-04-01'},
+    'CIFR': {'asset': 'BTC mined', 'holdings': 1701, 'price_ticker': 'BTC-USD',
+             'desc': 'Cipher Mining — BTC mining + treasury', 'updated': '2026-04-01'},
+    'WULF': {'asset': 'BTC mined', 'holdings': 720, 'price_ticker': 'BTC-USD',
+             'desc': 'TeraWulf — BTC mining + treasury', 'updated': '2026-04-01'},
+}
+
+
+@st.cache_data(ttl=600, show_spinner=False)  # 10 min — DAT NAV moves with crypto
+def get_dat_analysis(ticker: str, market_cap: float = 0,
+                     manual_asset_price: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """If `ticker` is a known Digital Asset Treasury company, compute mNAV
+    and premium/discount to NAV.
+
+    Returns None for non-DAT tickers so the UI can skip rendering the card.
+    Returns dict with: is_dat, asset, holdings, asset_price_usd,
+    nav_usd, market_cap, mnav, premium_pct, label, description.
+    """
+    if ticker not in DAT_COMPANIES:
+        return None
+    meta = DAT_COMPANIES[ticker]
+    holdings = meta.get('holdings', 0)
+    asset = meta.get('asset', '')
+    price_ticker = meta.get('price_ticker')
+    desc = meta.get('desc', '')
+
+    # 1) Get current asset price — three sources in order:
+    #    (a) manual override, (b) yfinance ticker proxy, (c) CoinGecko ID
+    asset_price = manual_asset_price or 0
+    if not asset_price and price_ticker:
+        try:
+            hist = _yf_retry(lambda: yf.Ticker(price_ticker).history(period='5d'))
+            if hist is not None and not hist.empty:
+                asset_price = float(hist['Close'].iloc[-1])
+        except Exception:
+            pass
+    if not asset_price and meta.get('coingecko_id'):
+        try:
+            import requests
+            cg_id = meta['coingecko_id']
+            r = requests.get(
+                'https://api.coingecko.com/api/v3/simple/price',
+                params={'ids': cg_id, 'vs_currencies': 'usd'},
+                timeout=5,
+            )
+            if r.ok:
+                d = r.json()
+                asset_price = float(d.get(cg_id, {}).get('usd', 0) or 0)
+        except Exception:
+            pass
+
+    nav_usd = (holdings * asset_price) if (holdings and asset_price) else 0
+    mnav = (market_cap / nav_usd) if (market_cap and nav_usd) else 0
+    premium_pct = (mnav - 1) * 100 if mnav else 0
+
+    if mnav > 5:
+        label = 'extreme_premium'
+    elif mnav > 2.5:
+        label = 'high_premium'
+    elif mnav > 1.5:
+        label = 'moderate_premium'
+    elif mnav > 0.95:
+        label = 'fair_value'
+    elif mnav > 0:
+        label = 'discount_to_nav'
+    else:
+        label = 'unknown'
+
+    return {
+        'is_dat': True,
+        'ticker': ticker,
+        'asset': asset,
+        'holdings': holdings,
+        'asset_price_usd': asset_price,
+        'nav_usd': nav_usd,
+        'market_cap': market_cap,
+        'mnav': mnav,
+        'premium_pct': premium_pct,
+        'label': label,
+        'description': desc,
+        'as_of': meta.get('updated', ''),
+    }
+
+
+# =============================================================================
+# GAMMA SQUEEZE PROBABILITY (Capital Flows / @Globalflows methodology)
+# =============================================================================
+# Squeeze setup combines:
+#  - Small float + high short interest (supply constraint)
+#  - Call OI accumulation > put OI (demand for upside)
+#  - Negative dealer gamma at higher strikes (forces hedging buys)
+#  - Low IV percentile (cheap call optionality drives demand spiral)
+#  - Liquidity/macro tailwind (credit cycle, risk-on)
+# Score 0-100 where >70 = high-probability setup.
+
+@st.cache_data(ttl=900, show_spinner=False)
+def compute_gamma_squeeze_probability(ticker: str) -> Dict[str, Any]:
+    """Compute a Capital-Flows-style gamma squeeze probability.
+
+    Combines supply constraints (float, short interest), options demand
+    (call/put OI ratio, recent call buying), gamma positioning, and
+    credit/macro tailwind into a single 0-100 score with subscores.
+
+    Returns dict with score, label, subscores, and short narrative.
+    """
+    out = {
+        'score': 50.0,
+        'label': 'neutral',
+        'subscores': {},
+        'narrative': '',
+        'components_used': 0,
+    }
+    try:
+        stock = yf.Ticker(ticker)
+        info = _yf_retry(lambda: stock.info) or {}
+
+        # === SUPPLY: small float + high short interest ===
+        float_shares = float(info.get('floatShares') or 0)
+        short_pct = float(info.get('shortPercentOfFloat') or 0) * 100
+        short_ratio = float(info.get('shortRatio') or 0)
+        market_cap = float(info.get('marketCap') or 0)
+        shares_out = float(info.get('sharesOutstanding') or 0)
+
+        supply_score = 50
+        narrative_parts = []
+        if float_shares and shares_out:
+            float_pct = float_shares / shares_out * 100
+            # GME pre-2021 had ~13% of shares short, float ~46M
+            if float_pct < 30:
+                supply_score += 20
+                narrative_parts.append(f'Insider-heavy float ({float_pct:.0f}% of shares public)')
+            elif float_pct < 50:
+                supply_score += 8
+        if short_pct > 25:
+            supply_score += 25
+            narrative_parts.append(f'Short interest {short_pct:.0f}% of float')
+        elif short_pct > 15:
+            supply_score += 15
+            narrative_parts.append(f'Elevated SI {short_pct:.0f}%')
+        elif short_pct > 8:
+            supply_score += 5
+        if short_ratio > 7:
+            supply_score += 10
+            narrative_parts.append(f'Days-to-cover {short_ratio:.1f}d')
+        supply_score = max(5, min(95, supply_score))
+        out['subscores']['supply'] = round(supply_score, 1)
+
+        # === OPTIONS DEMAND (call buying wave) ===
+        opt_score = 50
+        try:
+            expirations = _yf_retry(lambda: stock.options) or []
+            if expirations:
+                # Aggregate first 3 expirations
+                total_call_oi = total_put_oi = total_call_vol = 0
+                price_ref = float(info.get('currentPrice') or info.get('regularMarketPrice') or 0)
+                otm_call_oi = 0  # strikes 5-30% above spot
+                for exp in expirations[:3]:
+                    chain = _yf_retry(lambda: stock.option_chain(exp))
+                    if chain is None:
+                        continue
+                    calls = chain.calls
+                    puts = chain.puts
+                    for df in (calls, puts):
+                        for col in ('openInterest', 'volume'):
+                            if col in df.columns:
+                                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+                    total_call_oi += int(calls['openInterest'].sum())
+                    total_put_oi += int(puts['openInterest'].sum())
+                    total_call_vol += int(calls.get('volume', pd.Series(dtype=float)).sum() or 0)
+                    if price_ref > 0:
+                        otm = calls[(calls['strike'] > price_ref * 1.05) &
+                                   (calls['strike'] < price_ref * 1.30)]
+                        otm_call_oi += int(otm['openInterest'].sum())
+                if total_put_oi > 0:
+                    pc = total_call_oi / total_put_oi  # inverted -> calls per put
+                    if pc > 3:
+                        opt_score += 25
+                        narrative_parts.append(f'Call/Put OI {pc:.1f}x — heavy call positioning')
+                    elif pc > 2:
+                        opt_score += 15
+                        narrative_parts.append(f'Call/Put OI {pc:.1f}x')
+                    elif pc > 1.5:
+                        opt_score += 8
+                if otm_call_oi > 50000:
+                    opt_score += 15
+                    narrative_parts.append(f'{otm_call_oi:,} OTM call OI (5-30% above spot)')
+                elif otm_call_oi > 20000:
+                    opt_score += 8
+                # Call volume / OI ratio indicates fresh buying
+                if total_call_oi > 0 and total_call_vol / max(total_call_oi, 1) > 0.5:
+                    opt_score += 10
+                    narrative_parts.append('Active call buying (high vol/OI)')
+        except Exception:
+            pass
+        opt_score = max(5, min(95, opt_score))
+        out['subscores']['options_demand'] = round(opt_score, 1)
+
+        # === GAMMA & IV (cheap optionality drives demand) ===
+        gamma_score = 50
+        try:
+            hist = _yf_retry(lambda: stock.history(period='6mo'))
+            if hist is not None and not hist.empty:
+                iv_pct = _calc_iv_percentile_from_hist(hist)
+                # LOW IV % = cheap calls = catalysts for more buying
+                if iv_pct < 30:
+                    gamma_score += 15
+                    narrative_parts.append('IV percentile low (cheap calls)')
+                elif iv_pct < 45:
+                    gamma_score += 8
+        except Exception:
+            pass
+        gamma_score = max(5, min(95, gamma_score))
+        out['subscores']['gamma_iv'] = round(gamma_score, 1)
+
+        # === CREDIT/MACRO TAILWIND ===
+        macro_score = 50
+        try:
+            credit = get_credit_default_proxy()
+            macro_score = credit.get('credit_risk_score', 50)
+            if credit.get('credit_trajectory') == 'tightening':
+                # Tightening credit = stress = squeezes less likely
+                macro_score -= 10
+            elif credit.get('credit_trajectory') == 'widening':
+                macro_score -= 5
+        except Exception:
+            pass
+        macro_score = max(5, min(95, macro_score))
+        out['subscores']['macro'] = round(macro_score, 1)
+
+        # === COMPOSITE — weighted by importance ===
+        # Capital Flows weighting: supply 35%, options 30%, gamma/IV 20%, macro 15%
+        composite = (
+            supply_score * 0.35 +
+            opt_score * 0.30 +
+            gamma_score * 0.20 +
+            macro_score * 0.15
+        )
+        out['score'] = round(composite, 1)
+        out['components_used'] = 4
+
+        if composite >= 75:
+            out['label'] = 'very_high'
+        elif composite >= 65:
+            out['label'] = 'high'
+        elif composite >= 55:
+            out['label'] = 'moderate'
+        elif composite >= 45:
+            out['label'] = 'low'
+        else:
+            out['label'] = 'very_low'
+
+        out['narrative'] = ' · '.join(narrative_parts[:4]) if narrative_parts else 'No standout squeeze signals'
+    except Exception as e:
+        out['narrative'] = f'Could not compute: {e}'
+    return out
+
+
 def calculate_konkorde(hist: pd.DataFrame) -> Dict[str, pd.Series]:
     """
     Calculate Konkorde 2.0 indicator.

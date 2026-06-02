@@ -3035,16 +3035,47 @@ def show_stock_analysis():
     st.markdown('<p class="main-header">📊 Stock Analysis</p>', unsafe_allow_html=True)
 
     default_ticker = st.session_state.get('selected_ticker', 'NVDA')
+
+    # === MODERN SEARCH UX: live ticker autocomplete + sanitize ===
+    # As the user types, the Yahoo search endpoint returns matching tickers
+    # which we surface in a selectbox. Hitting Enter or selecting a row
+    # jumps to the analysis page for that ticker.
+    from webapp.data.providers import search_tickers
     col1, col2 = st.columns([3, 1])
     with col1:
-        # Sanitize ticker input: uppercase + strip whitespace + allow only
-        # standard ticker characters (letters, digits, .-/). Prevents "apple"
-        # vs "AAPL" confusion and stops accidental whitespace from breaking
-        # the Yahoo lookup.
-        _raw = st.text_input("Ticker", default_ticker, key="analysis_ticker",
-                              help=t('error.invalid_ticker_input'))
+        _raw = st.text_input("Ticker", default_ticker, key="analysis_ticker_input",
+                              help=t('error.invalid_ticker_input'),
+                              label_visibility='visible')
         import re as _re
         ticker = _re.sub(r'[^A-Z0-9.\-/^]', '', (_raw or '').strip().upper())
+
+        # Live suggestions when query is 1-5 chars and DOESN'T exactly match
+        # a known stock data result. Only call search when input differs from
+        # the last selected ticker so we don't hit Yahoo on every rerun.
+        if _raw and len(_raw) >= 1 and _raw.upper() != st.session_state.get('selected_ticker', ''):
+            try:
+                suggestions = search_tickers(_raw, limit=6)
+                if suggestions and not any(s['symbol'].upper() == ticker for s in suggestions[:1]):
+                    # Display as compact suggestion chips
+                    chips = ' · '.join(
+                        f'**{s["symbol"]}** {s["name"][:30]}'
+                        for s in suggestions[:5]
+                    )
+                    st.caption(f'💡 {chips}')
+                    # Quick-pick: small selectbox with the suggestions
+                    _pick_labels = [f"{s['symbol']} — {s['name'][:40]}" for s in suggestions[:6]]
+                    _pick_labels.insert(0, '— select to jump —')
+                    _picked = st.selectbox(
+                        ' ', _pick_labels, index=0, key=f"ticker_pick_{_raw}",
+                        label_visibility='collapsed',
+                    )
+                    if _picked != '— select to jump —':
+                        _sym = _picked.split(' — ')[0]
+                        st.session_state.selected_ticker = _sym
+                        st.rerun()
+            except Exception:
+                pass
+
         if not ticker:
             st.info(t('error.invalid_ticker_input'))
             return
@@ -3099,6 +3130,23 @@ def show_stock_analysis():
     price_color = "#10B981" if change_pct >= 0 else "#EF4444"
     change_sym = "▲" if change_pct >= 0 else "▼"
 
+    # Logo URL — lazy fetched, cached 24h. May return None for unknown tickers.
+    try:
+        from webapp.data.providers import get_company_logo_url
+        _logo_url = get_company_logo_url(ticker, website=data.get('website', ''))
+    except Exception:
+        _logo_url = None
+    _logo_html = (
+        f'<img src="{_logo_url}" alt="{ticker}" '
+        f'style="width:42px;height:42px;border-radius:8px;object-fit:contain;background:#0d1117;'
+        f'padding:4px;border:1px solid #21262d;" '
+        f'onerror="this.style.display=\'none\'" />'
+        if _logo_url else
+        f'<div style="width:42px;height:42px;border-radius:8px;background:#21262d;'
+        f'display:flex;align-items:center;justify-content:center;color:#8b949e;'
+        f'font-weight:700;font-size:0.85rem;">{ticker[:3]}</div>'
+    )
+
     # Use ENRICHED scoring for individual stock page — adds per-ticker
     # options signals (IV, skew, P/C OI, GEX, squeeze, catalyst proximity),
     # fundamental momentum (analyst revisions, insider clusters, ROIC trend,
@@ -3139,10 +3187,11 @@ def show_stock_analysis():
         st.markdown(f"""
         <div style="background:#161b22; padding:18px; border-radius:10px;">
             <div style="display:flex; align-items:center; gap:15px;">
+                {_logo_html}
                 <div>
                     <h1 style="margin:0; font-size:2rem;">{ticker}</h1>
-                    <p style="margin:3px 0 0 0; color:#888; font-size:0.85rem;">{company_name}</p>
-                    <p style="margin:2px 0 0 0; color:#666; font-size:0.75rem;">{sector} · {industry}</p>
+                    <p style="margin:3px 0 0 0; color:#888; font-size:0.85rem;">{_esc(company_name)}</p>
+                    <p style="margin:2px 0 0 0; color:#666; font-size:0.75rem;">{_esc(sector)} · {_esc(industry)}</p>
                 </div>
                 <div style="margin-left:auto; text-align:right;">
                     <div style="font-size:2rem; font-weight:bold;">&#36;{price:.2f}</div>
@@ -3198,6 +3247,146 @@ def show_stock_analysis():
     _coverage_score = sum([_has_sector, _has_eps, _has_roe, _has_targets, _has_growth])
     if _coverage_score <= 2:
         st.warning(t('error.low_data_warning', ticker=ticker), icon="⚠️")
+
+    # =========================================================================
+    # DIGITAL ASSET TREASURY (DAT) card — for tickers like PURR/MSTR that
+    # are valued on holdings, not earnings. Computes mNAV (market cap / NAV
+    # of treasury holdings) and shows premium/discount to NAV.
+    # =========================================================================
+    try:
+        from webapp.data.providers import get_dat_analysis
+        market_cap = data.get('market_cap') or (data.get('info', {}) or {}).get('marketCap', 0)
+        dat = get_dat_analysis(ticker, market_cap=market_cap)
+        if dat and dat.get('is_dat') and dat.get('nav_usd'):
+            mnav = dat['mnav']
+            premium = dat['premium_pct']
+            label = dat['label']
+            label_color = {
+                'extreme_premium': '#f85149',   # red — significantly overvalued vs NAV
+                'high_premium': '#f0883e',      # orange
+                'moderate_premium': '#d29922',  # yellow
+                'fair_value': '#3fb950',        # green
+                'discount_to_nav': '#58a6ff',   # blue — undervalued
+            }.get(label, '#8b949e')
+            label_text_map = {
+                'extreme_premium': 'EXTREME PREMIUM' if st.session_state.get('lang','en')=='en' else 'PRIMA EXTREMA',
+                'high_premium': 'HIGH PREMIUM' if st.session_state.get('lang','en')=='en' else 'PRIMA ALTA',
+                'moderate_premium': 'MODERATE PREMIUM' if st.session_state.get('lang','en')=='en' else 'PRIMA MODERADA',
+                'fair_value': 'FAIR VALUE' if st.session_state.get('lang','en')=='en' else 'VALOR JUSTO',
+                'discount_to_nav': 'DISCOUNT TO NAV' if st.session_state.get('lang','en')=='en' else 'DESCUENTO vs NAV',
+            }
+            st.markdown(f"""
+            <div style="background:linear-gradient(135deg,#161b22,{label_color}15);
+                        border:1px solid {label_color}40; border-left:4px solid {label_color};
+                        border-radius:10px; padding:14px; margin:12px 0;">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px;">
+                    <div>
+                        <div style="font-size:0.7rem; text-transform:uppercase; letter-spacing:0.6px; color:#8b949e; font-weight:600;">
+                            Digital Asset Treasury · {_esc(dat['asset'])}
+                        </div>
+                        <div style="font-size:0.85rem; color:#c9d1d9; margin-top:2px;">{_esc(dat['description'])}</div>
+                    </div>
+                    <div style="display:flex; gap:18px; align-items:center;">
+                        <div style="text-align:right;">
+                            <div style="font-size:0.65rem; color:#6e7681; text-transform:uppercase;">Holdings</div>
+                            <div style="font-size:0.9rem; color:#e6edf3; font-weight:600;">{dat['holdings']:,.0f} {_esc(dat['asset'])}</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-size:0.65rem; color:#6e7681; text-transform:uppercase;">NAV</div>
+                            <div style="font-size:0.9rem; color:#e6edf3; font-weight:600;">&#36;{dat['nav_usd']/1e9:.2f}B</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-size:0.65rem; color:#6e7681; text-transform:uppercase;">mNAV</div>
+                            <div style="font-size:1.1rem; color:{label_color}; font-weight:800;">{mnav:.2f}x</div>
+                        </div>
+                        <div style="background:{label_color}; color:white; padding:4px 12px; border-radius:8px;
+                                    font-size:0.7rem; font-weight:700;">
+                            {label_text_map.get(label, label)} {premium:+.0f}%
+                        </div>
+                    </div>
+                </div>
+                <div style="font-size:0.7rem; color:#6e7681; margin-top:8px;">
+                    As of {_esc(dat.get('as_of', 'N/A'))} · NAV updates with {_esc(dat['asset'])} price
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    except Exception:
+        pass
+
+    # =========================================================================
+    # GAMMA SQUEEZE PROBABILITY (Capital Flows / @Globalflows methodology)
+    # =========================================================================
+    # Combines small float + high short interest + call OI dominance +
+    # cheap IV + macro tailwind into a single 0-100 probability score.
+    # Shown for tickers with low fundamentals (treasury/memecoin-style)
+    # OR tickers with notable squeeze signals.
+    try:
+        from webapp.data.providers import compute_gamma_squeeze_probability
+        # Only compute for stocks (not ETFs/futures) and skip if data full
+        _info = data.get('info') or {}
+        _is_stock = _info.get('quoteType', '').upper() in ('EQUITY', '') and _coverage_score < 5
+        if _is_stock:
+            sq = compute_gamma_squeeze_probability(ticker)
+            sq_score = sq.get('score', 50)
+            sq_label = sq.get('label', 'neutral')
+            # Only render if signal is meaningful (>55) or this is a low-data ticker
+            if sq_score >= 55 or _coverage_score <= 2:
+                label_color = {
+                    'very_high': '#f85149',   # red — most extreme
+                    'high': '#f0883e',
+                    'moderate': '#d29922',
+                    'low': '#8b949e',
+                    'very_low': '#3fb950',
+                    'neutral': '#8b949e',
+                }.get(sq_label, '#8b949e')
+                label_text = sq_label.replace('_', ' ').upper()
+                subs = sq.get('subscores', {})
+                st.markdown(f"""
+                <div style="background:linear-gradient(135deg,#161b22,{label_color}12);
+                            border:1px solid {label_color}40; border-left:4px solid {label_color};
+                            border-radius:10px; padding:14px; margin:12px 0;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px;">
+                        <div>
+                            <div style="font-size:0.7rem; text-transform:uppercase; letter-spacing:0.6px; color:#8b949e; font-weight:600;">
+                                ⚡ Gamma Squeeze Probability
+                            </div>
+                            <div style="font-size:0.8rem; color:#c9d1d9; margin-top:2px;">
+                                Capital Flows methodology — supply + options demand + gamma + macro
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:14px; align-items:center;">
+                            <div style="text-align:right;">
+                                <div style="font-size:0.6rem; color:#6e7681; text-transform:uppercase;">Supply</div>
+                                <div style="font-size:0.8rem; color:#e6edf3; font-weight:600;">{subs.get('supply', 50):.0f}</div>
+                            </div>
+                            <div style="text-align:right;">
+                                <div style="font-size:0.6rem; color:#6e7681; text-transform:uppercase;">Options</div>
+                                <div style="font-size:0.8rem; color:#e6edf3; font-weight:600;">{subs.get('options_demand', 50):.0f}</div>
+                            </div>
+                            <div style="text-align:right;">
+                                <div style="font-size:0.6rem; color:#6e7681; text-transform:uppercase;">Gamma/IV</div>
+                                <div style="font-size:0.8rem; color:#e6edf3; font-weight:600;">{subs.get('gamma_iv', 50):.0f}</div>
+                            </div>
+                            <div style="text-align:right;">
+                                <div style="font-size:0.6rem; color:#6e7681; text-transform:uppercase;">Macro</div>
+                                <div style="font-size:0.8rem; color:#e6edf3; font-weight:600;">{subs.get('macro', 50):.0f}</div>
+                            </div>
+                            <div style="text-align:center;">
+                                <div style="font-size:1.5rem; font-weight:800; color:{label_color}; line-height:1;">{sq_score:.0f}</div>
+                                <div style="background:{label_color}; color:white; padding:2px 10px; border-radius:8px;
+                                            font-size:0.65rem; font-weight:700; margin-top:4px; display:inline-block;">
+                                    {label_text}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="font-size:0.72rem; color:#8b949e; margin-top:8px; line-height:1.4;">
+                        {_esc(sq.get('narrative', ''))}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+    except Exception:
+        pass
 
     # =========================================================================
     # SCORE EXPLANATION PANEL - Always visible, prominent
