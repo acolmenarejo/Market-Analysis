@@ -3037,7 +3037,17 @@ def show_stock_analysis():
     default_ticker = st.session_state.get('selected_ticker', 'NVDA')
     col1, col2 = st.columns([3, 1])
     with col1:
-        ticker = st.text_input("Ticker", default_ticker, key="analysis_ticker").upper()
+        # Sanitize ticker input: uppercase + strip whitespace + allow only
+        # standard ticker characters (letters, digits, .-/). Prevents "apple"
+        # vs "AAPL" confusion and stops accidental whitespace from breaking
+        # the Yahoo lookup.
+        _raw = st.text_input("Ticker", default_ticker, key="analysis_ticker",
+                              help=t('error.invalid_ticker_input'))
+        import re as _re
+        ticker = _re.sub(r'[^A-Z0-9.\-/^]', '', (_raw or '').strip().upper())
+        if not ticker:
+            st.info(t('error.invalid_ticker_input'))
+            return
         if ticker != st.session_state.get('selected_ticker'):
             st.session_state.selected_ticker = ticker
     with col2:
@@ -3056,17 +3066,26 @@ def show_stock_analysis():
         return
 
     if 'error' in data:
-        if data.get('error') == 'rate_limited':
-            # Provider returns an i18n KEY in error_message — translate here so
-            # the warning respects the user's language preference.
-            _msg_key = data.get('error_message', 'rate_limit.message')
-            _msg = t(_msg_key) if isinstance(_msg_key, str) and '.' in _msg_key else _msg_key
-            st.warning(f"⚠️ {_msg}")
-            if st.button(t("common.retry"), key=f"rl_retry_{ticker}", type="primary"):
-                get_stock_data.clear()
-                st.rerun()
+        # Distinguish failure modes with appropriate UX:
+        #   - rate_limited: temporary, show compact warning + Retry
+        #   - ticker_not_found: user error, show hint + ticker input help
+        #   - other: generic error
+        err_code = data.get('error')
+        if err_code == 'rate_limited':
+            # Compact one-line warning instead of giant banner
+            cols_warn = st.columns([4, 1])
+            with cols_warn[0]:
+                st.warning(f"⚠️ {t('rate_limit.compact')}", icon=None)
+            with cols_warn[1]:
+                if st.button(t("common.retry"), key=f"rl_retry_{ticker}", type="primary", use_container_width=True):
+                    get_stock_data.clear()
+                    st.rerun()
             return
-        st.error(f"Error: {data['error']}")
+        elif err_code == 'ticker_not_found':
+            st.error(f"❌ {t('error.ticker_not_found')}: **{ticker}**")
+            st.caption(t('error.ticker_not_found_detail', ticker=ticker))
+            return
+        st.error(f"Error: {data.get('error_message') or data['error']}")
         return
 
     # =========================================================================
@@ -3162,6 +3181,23 @@ def show_stock_analysis():
             </div>
         </div>
         """, unsafe_allow_html=True)
+
+    # =========================================================================
+    # DATA-COVERAGE / CONFIDENCE INDICATOR
+    # =========================================================================
+    # Some tickers (e.g. PURR, brand-new IPOs, OTC tickers) lack analyst data,
+    # sector classification, or fundamentals. Scoring them gives near-default
+    # values for many factors -> scores cluster around 50 with little spread
+    # across horizons. Warn the user explicitly so they don't read too much
+    # into the numbers.
+    _has_sector = data.get('sector') and data.get('sector') != 'N/A'
+    _has_eps = (data.get('trailing_eps') or 0) != 0
+    _has_roe = (data.get('roe') or 0) != 0
+    _has_targets = (data.get('target_price') or 0) != 0
+    _has_growth = (data.get('revenue_growth') or 0) != 0 or (data.get('earnings_growth') or 0) != 0
+    _coverage_score = sum([_has_sector, _has_eps, _has_roe, _has_targets, _has_growth])
+    if _coverage_score <= 2:
+        st.warning(t('error.low_data_warning', ticker=ticker), icon="⚠️")
 
     # =========================================================================
     # SCORE EXPLANATION PANEL - Always visible, prominent

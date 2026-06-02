@@ -215,8 +215,17 @@
   "polymarket.loading_markets": "Loading markets...",
 
   "rate_limit.message": "Yahoo Finance rate-limited the request. Wait 30-60 seconds and click Retry. Cached data for other tickers remains available.",
+  "rate_limit.compact": "Rate-limited by Yahoo · wait 30-60s",
   "rate_limit.history_warn": "⚠️ Yahoo rate limit hit for this period — showing cached 6M history.",
   "rate_limit.no_data": "Error: No data available for {ticker}",
+  "error.ticker_not_found": "Ticker not found",
+  "error.ticker_not_found_detail": "{ticker} is not a valid symbol on Yahoo Finance. Did you mean something else? Tip: try uppercase (e.g. AAPL instead of apple).",
+  "error.invalid_ticker_input": "Please enter a valid ticker symbol",
+  "error.low_data_warning": "⚠️ Limited data for {ticker} — scoring uses defaults for missing fields. Treat scores as low-confidence.",
+  "common.confidence": "Confidence",
+  "common.confidence_high": "High",
+  "common.confidence_medium": "Medium",
+  "common.confidence_low": "Low",
 
   "macro.regime": "Macro Regime (Pro)",
   "macro.regime_easy": "EASY LIQUIDITY",

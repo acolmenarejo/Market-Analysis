@@ -693,20 +693,34 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
         hist = _yf_retry(lambda: stock.history(period=period))
         info = _yf_retry(lambda: stock.info)
 
-        # If BOTH calls failed, it's a clear rate-limit / API failure: surface
-        # a friendly error so the UI can show a retry hint, rather than
-        # rendering a page full of zeros.
+        # Distinguish three failure modes — they need different UX:
+        #   1) Both None -> Yahoo throttled us (transient, show retry)
+        #   2) hist empty + info empty but no 429 -> ticker probably invalid
+        #      (e.g. user typed 'apple' instead of 'AAPL'). Showing "rate
+        #      limited" misleads — surface as 'ticker_not_found' instead.
+        #   3) Either has data -> proceed normally.
+        _hist_empty = hist is None or (hasattr(hist, 'empty') and hist.empty)
+        _info_empty_or_minimal = info is None or _info_is_empty(info)
+
         if hist is None and info is None:
-            # Note: actual message rendered via t('rate_limit.message') in the
-            # UI layer so it respects the user's language preference. The
-            # `error_message` field below is a fallback for any caller that
-            # bypasses the translation layer.
             return {
                 'ticker': ticker,
                 'error': 'rate_limited',
-                'error_message': 'rate_limit.message',  # i18n key
+                'error_message': 'rate_limit.message',
                 'price': 0, 'rsi': 50, 'macd_bullish': False, 'momentum_1m': 0,
             }
+        # Empty (not None) responses from BOTH endpoints almost always mean
+        # the ticker symbol doesn't exist on Yahoo. Don't show rate-limit UX.
+        if _hist_empty and _info_empty_or_minimal:
+            # Try cached fundamentals one last time before declaring not-found
+            _cached_funds = _load_fundamentals_cache()
+            if ticker not in _cached_funds:
+                return {
+                    'ticker': ticker,
+                    'error': 'ticker_not_found',
+                    'error_message': 'error.ticker_not_found',
+                    'price': 0, 'rsi': 50, 'macd_bullish': False, 'momentum_1m': 0,
+                }
 
         if hist is None:
             hist = pd.DataFrame()
@@ -828,10 +842,27 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
             current_price = 0
             current_vwap = 0
 
+        # Live price: prefer history close (always fresh, never cached) over
+        # info dict fields which may be stale or stripped from the volatile
+        # cache fallback path.
+        _live_price = float(hist['Close'].iloc[-1]) if not hist.empty and 'Close' in hist.columns else 0
+        if not _live_price or pd.isna(_live_price):
+            _live_price = info.get('currentPrice') or info.get('regularMarketPrice') or 0
+        # Daily change from history close[-1] vs close[-2]. This works for
+        # both daily and intraday history slices, and never returns 0%
+        # spuriously when info doesn't contain regularMarketChangePercent.
+        _change_pct = 0
+        try:
+            if not hist.empty and 'Close' in hist.columns and len(hist['Close'].dropna()) >= 2:
+                _closes = hist['Close'].dropna()
+                _change_pct = float((_closes.iloc[-1] / _closes.iloc[-2] - 1) * 100)
+        except Exception:
+            _change_pct = info.get('regularMarketChangePercent', 0) or 0
+
         return {
             'ticker': ticker,
-            'price': info.get('currentPrice', info.get('regularMarketPrice', current_price if not hist.empty else 0)),
-            'change_pct': info.get('regularMarketChangePercent', 0),
+            'price': _live_price,
+            'change_pct': _change_pct,
             'history': hist,
             'info': info,
 
