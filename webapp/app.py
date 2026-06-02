@@ -3040,7 +3040,12 @@ def show_stock_analysis():
     # As the user types, the Yahoo search endpoint returns matching tickers
     # which we surface in a selectbox. Hitting Enter or selecting a row
     # jumps to the analysis page for that ticker.
-    from webapp.data.providers import search_tickers
+    # Defensive import: tolerate deploy lag where providers.py might not yet
+    # have search_tickers (e.g. mid-rollout). UI degrades to no-autocomplete.
+    try:
+        from webapp.data.providers import search_tickers
+    except ImportError:
+        search_tickers = None
     col1, col2 = st.columns([3, 1])
     with col1:
         _raw = st.text_input("Ticker", default_ticker, key="analysis_ticker_input",
@@ -3052,7 +3057,8 @@ def show_stock_analysis():
         # Live suggestions when query is 1-5 chars and DOESN'T exactly match
         # a known stock data result. Only call search when input differs from
         # the last selected ticker so we don't hit Yahoo on every rerun.
-        if _raw and len(_raw) >= 1 and _raw.upper() != st.session_state.get('selected_ticker', ''):
+        if (_raw and len(_raw) >= 1 and search_tickers is not None
+                and _raw.upper() != st.session_state.get('selected_ticker', '')):
             try:
                 suggestions = search_tickers(_raw, limit=6)
                 if suggestions and not any(s['symbol'].upper() == ticker for s in suggestions[:1]):
