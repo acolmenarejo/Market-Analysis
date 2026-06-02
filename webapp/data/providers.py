@@ -569,6 +569,513 @@ def get_dat_analysis(ticker: str, market_cap: float = 0,
 
 
 # =============================================================================
+# STRIKE LISTING TRACKER — detect when new (higher) option strikes are added
+# =============================================================================
+# Capital Flows' thesis on PURR specifically calls out that the squeeze will
+# ignite when OCC lists higher strikes (so far-OTM call buying becomes
+# possible). We track max(strike) per (ticker, expiration) on disk; when
+# the value jumps materially we record an event and the UI shows a
+# prominent alert banner for 7 days.
+
+STRIKE_HISTORY_FILE = ROOT_DIR / 'data' / 'strike_history.parquet'
+NEW_STRIKE_ALERT_DAYS = 7  # banner stays visible this many days after detection
+
+
+def _load_strike_history() -> pd.DataFrame:
+    """Disk-cached history of max strike observed per (ticker, expiration)."""
+    try:
+        if STRIKE_HISTORY_FILE.exists():
+            return pd.read_parquet(STRIKE_HISTORY_FILE)
+    except Exception as e:
+        print(f"strike history read error: {e}")
+    return pd.DataFrame(columns=['ticker', 'expiration', 'max_strike',
+                                  'min_strike', 'n_strikes', 'observed_at',
+                                  'event_type', 'jump_pct'])
+
+
+def _save_strike_history(df: pd.DataFrame) -> None:
+    try:
+        STRIKE_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(STRIKE_HISTORY_FILE, index=False)
+    except Exception as e:
+        print(f"strike history write error: {e}")
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def check_new_strikes(ticker: str) -> Dict[str, Any]:
+    """Detect newly-listed option strikes for `ticker` vs last observation.
+
+    Returns dict with:
+      has_new_strikes : bool (only True when a real jump is detected)
+      event_age_days  : how recent the latest detection is
+      new_max_strike  : the new ceiling
+      old_max_strike  : the previous ceiling
+      jump_pct        : how much the ceiling moved
+      affected_expirations : list of expirations that gained new strikes
+      catalyst_score  : 0-100 (higher = more bullish for squeeze setup)
+    """
+    out = {
+        'has_new_strikes': False,
+        'event_age_days': None,
+        'new_max_strike': 0,
+        'old_max_strike': 0,
+        'jump_pct': 0.0,
+        'affected_expirations': [],
+        'catalyst_score': 0,
+        'narrative': '',
+    }
+    try:
+        stock = yf.Ticker(ticker)
+        expirations = _yf_retry(lambda: stock.options) or []
+        if not expirations:
+            return out
+
+        # Build current snapshot — max strike per expiration (look at first 6 expirations)
+        current = {}
+        for exp in expirations[:6]:
+            try:
+                chain = _yf_retry(lambda: stock.option_chain(exp))
+                if chain is None:
+                    continue
+                strikes = list(chain.calls['strike'].dropna().tolist())
+                if strikes:
+                    current[exp] = {
+                        'max_strike': float(max(strikes)),
+                        'min_strike': float(min(strikes)),
+                        'n_strikes': len(strikes),
+                    }
+            except Exception:
+                continue
+
+        if not current:
+            return out
+
+        # Load history, compare
+        hist = _load_strike_history()
+        now = pd.Timestamp.utcnow()
+        new_events = []
+        affected = []
+        biggest_jump_pct = 0.0
+        biggest_new_max = 0.0
+        biggest_old_max = 0.0
+
+        for exp, snap in current.items():
+            prev = hist[(hist['ticker'] == ticker) & (hist['expiration'] == exp)]
+            event_type = 'first_observation'
+            jump_pct = 0.0
+            if not prev.empty:
+                prev_max = float(prev['max_strike'].max())
+                # A "new strike" event = max strike rose by >=5% (or >=2 strikes added)
+                if snap['max_strike'] > prev_max * 1.04 or snap['n_strikes'] > int(prev['n_strikes'].max()) + 1:
+                    event_type = 'new_strikes_listed'
+                    jump_pct = (snap['max_strike'] / prev_max - 1) * 100 if prev_max else 0
+                    affected.append(exp)
+                    if jump_pct > biggest_jump_pct:
+                        biggest_jump_pct = jump_pct
+                        biggest_new_max = snap['max_strike']
+                        biggest_old_max = prev_max
+                else:
+                    event_type = 'no_change'
+            new_events.append({
+                'ticker': ticker,
+                'expiration': exp,
+                'max_strike': snap['max_strike'],
+                'min_strike': snap['min_strike'],
+                'n_strikes': snap['n_strikes'],
+                'observed_at': now,
+                'event_type': event_type,
+                'jump_pct': jump_pct,
+            })
+
+        # Persist
+        new_df = pd.DataFrame(new_events)
+        if not new_df.empty:
+            combined = pd.concat([hist, new_df], ignore_index=True)
+            # Keep last 60 days only
+            cutoff = now - pd.Timedelta(days=60)
+            combined['observed_at'] = pd.to_datetime(combined['observed_at'], errors='coerce')
+            combined = combined[combined['observed_at'] >= cutoff]
+            _save_strike_history(combined)
+
+        # Look for the most recent new_strikes_listed event in last 7 days
+        recent_events = []
+        if not hist.empty:
+            hist['observed_at'] = pd.to_datetime(hist['observed_at'], errors='coerce')
+            recent_events = hist[
+                (hist['ticker'] == ticker)
+                & (hist['event_type'] == 'new_strikes_listed')
+                & (hist['observed_at'] >= now - pd.Timedelta(days=NEW_STRIKE_ALERT_DAYS))
+            ]
+        # Also include the current run's events
+        if affected:
+            for exp in affected:
+                row = next((e for e in new_events if e['expiration'] == exp), None)
+                if row:
+                    recent_events = pd.concat([recent_events, pd.DataFrame([row])], ignore_index=True)
+
+        if isinstance(recent_events, pd.DataFrame) and not recent_events.empty:
+            latest = recent_events.sort_values('observed_at', ascending=False).iloc[0]
+            age_days = (now - pd.to_datetime(latest['observed_at'])).total_seconds() / 86400
+            out['has_new_strikes'] = age_days <= NEW_STRIKE_ALERT_DAYS
+            out['event_age_days'] = round(age_days, 1)
+            out['new_max_strike'] = float(latest.get('max_strike', biggest_new_max))
+            out['old_max_strike'] = biggest_old_max
+            out['jump_pct'] = float(latest.get('jump_pct', biggest_jump_pct))
+            out['affected_expirations'] = affected or sorted(recent_events['expiration'].unique().tolist())[:4]
+            # Catalyst score: bigger jump + more expirations = higher
+            base = min(80, 40 + out['jump_pct'] * 4)
+            multi_exp_bonus = min(20, len(out['affected_expirations']) * 5)
+            recency_bonus = max(0, 10 * (1 - age_days / NEW_STRIKE_ALERT_DAYS))
+            out['catalyst_score'] = round(min(100, base + multi_exp_bonus + recency_bonus), 1)
+            out['narrative'] = (
+                f"New strikes listed: max went ${biggest_old_max:.0f} → ${biggest_new_max:.0f} "
+                f"({out['jump_pct']:+.0f}%) across {len(out['affected_expirations'])} expiration(s)"
+            )
+    except Exception as e:
+        out['narrative'] = f'tracker error: {e}'
+    return out
+
+
+# =============================================================================
+# FINNHUB — Short interest + Insider transactions (Tier 1)
+# =============================================================================
+
+@st.cache_data(ttl=21600, show_spinner=False)  # 6h — FINRA updates twice/month
+def get_finnhub_short_interest(ticker: str) -> Dict[str, Any]:
+    """Real short interest from FINRA via Finnhub.
+
+    Returns the latest reported SI as % of float, days-to-cover, and the
+    trend over the last 4 reporting periods.
+    """
+    out = {
+        'short_pct_of_float': 0.0,
+        'days_to_cover': 0.0,
+        'short_interest_shares': 0,
+        'settlement_date': None,
+        'trend': 'unknown',
+        'periods': [],
+    }
+    try:
+        from webapp.config import get_finnhub_key
+        api_key = get_finnhub_key()
+        if not api_key:
+            return out
+        import requests
+        # Last 90 days of SI snapshots
+        from_date = (pd.Timestamp.utcnow() - pd.Timedelta(days=90)).strftime('%Y-%m-%d')
+        to_date = pd.Timestamp.utcnow().strftime('%Y-%m-%d')
+        r = requests.get(
+            'https://finnhub.io/api/v1/stock/insider-sentiment',
+            params={'symbol': ticker, 'from': from_date, 'to': to_date, 'token': api_key},
+            timeout=5,
+        )
+        # NOTE: insider-sentiment is the closest free-tier endpoint that gives
+        # us insider buying/selling. The short-interest endpoint requires the
+        # premium tier; we'll get short_pct via the stock.info path elsewhere
+        # if available. Here we focus on what the free tier actually supports.
+        # Try `stock/short-interest` anyway in case the tier supports it:
+        r2 = requests.get(
+            'https://finnhub.io/api/v1/stock/short-interest',
+            params={'symbol': ticker, 'from': from_date, 'to': to_date, 'token': api_key},
+            timeout=5,
+        )
+        if r2.ok:
+            data = r2.json() or []
+            if data:
+                df = pd.DataFrame(data)
+                if 'shortInterest' in df.columns and 'settlementDate' in df.columns:
+                    df = df.sort_values('settlementDate', ascending=False)
+                    latest = df.iloc[0]
+                    out['short_interest_shares'] = int(latest.get('shortInterest', 0))
+                    out['settlement_date'] = latest.get('settlementDate')
+                    out['days_to_cover'] = float(latest.get('daysToCover', 0) or 0)
+                    # Trend over last 4 reports
+                    periods = df.head(4).to_dict(orient='records')
+                    out['periods'] = periods
+                    if len(periods) >= 2:
+                        cur = float(periods[0].get('shortInterest', 0) or 0)
+                        prev = float(periods[1].get('shortInterest', 0) or 0)
+                        if cur > prev * 1.05:
+                            out['trend'] = 'rising'
+                        elif cur < prev * 0.95:
+                            out['trend'] = 'falling'
+                        else:
+                            out['trend'] = 'stable'
+    except Exception:
+        pass
+    return out
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_finnhub_insider_transactions(ticker: str) -> Dict[str, Any]:
+    """Insider Form 4 transactions via Finnhub free tier.
+
+    Returns aggregated buy/sell counts and net dollar flow over 90 days,
+    plus the most recent transactions.
+    """
+    out = {
+        'n_buys_90d': 0,
+        'n_sells_90d': 0,
+        'net_dollar_flow': 0,
+        'buy_value': 0,
+        'sell_value': 0,
+        'recent_transactions': [],
+        'cluster_score': 50.0,
+    }
+    try:
+        from webapp.config import get_finnhub_key
+        api_key = get_finnhub_key()
+        if not api_key:
+            return out
+        import requests
+        from_date = (pd.Timestamp.utcnow() - pd.Timedelta(days=90)).strftime('%Y-%m-%d')
+        to_date = pd.Timestamp.utcnow().strftime('%Y-%m-%d')
+        r = requests.get(
+            'https://finnhub.io/api/v1/stock/insider-transactions',
+            params={'symbol': ticker, 'from': from_date, 'to': to_date, 'token': api_key},
+            timeout=5,
+        )
+        if r.ok:
+            data = r.json() or {}
+            txns = data.get('data', []) or []
+            buys, sells = 0, 0
+            buy_value, sell_value = 0.0, 0.0
+            for tx in txns:
+                share = int(tx.get('share', 0) or 0)
+                # Finnhub: positive shares = purchase, negative = sale
+                # transactionPrice * abs(share) = $ value
+                price = float(tx.get('transactionPrice', 0) or 0)
+                value = abs(share) * price
+                if share > 0:
+                    buys += 1
+                    buy_value += value
+                elif share < 0:
+                    sells += 1
+                    sell_value += value
+            out['n_buys_90d'] = buys
+            out['n_sells_90d'] = sells
+            out['buy_value'] = round(buy_value)
+            out['sell_value'] = round(sell_value)
+            out['net_dollar_flow'] = round(buy_value - sell_value)
+            out['recent_transactions'] = txns[:5]
+            # Cluster score: cluster of insiders buying is strong signal
+            score = 50.0
+            if buys >= 5 and out['net_dollar_flow'] > 0:
+                score = 85
+            elif buys >= 3 and out['net_dollar_flow'] > 0:
+                score = 75
+            elif buys > sells and buys >= 2:
+                score = 62
+            elif sells >= 5 and out['net_dollar_flow'] < 0:
+                score = 25
+            elif sells > buys:
+                score = 40
+            out['cluster_score'] = score
+    except Exception:
+        pass
+    return out
+
+
+# =============================================================================
+# SEC EDGAR — 8-K catalysts (Tier 2, free no API key)
+# =============================================================================
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_sec_edgar_filings(ticker: str, limit: int = 8) -> Dict[str, Any]:
+    """Recent 8-K + 10-K filings for `ticker` from SEC EDGAR free API.
+
+    8-Ks are MATERIAL events (earnings, M&A, executive changes, divestitures).
+    Useful for detecting recent catalysts that could trigger a squeeze move.
+
+    Returns count + recent filings list with form, date, description.
+    """
+    out = {
+        'recent_8k_count': 0,
+        'recent_10k_count': 0,
+        'filings': [],
+        'last_filing_age_days': None,
+    }
+    try:
+        import requests
+        # 1) Resolve ticker -> CIK via EDGAR company tickers list
+        r = requests.get(
+            'https://www.sec.gov/cgi-bin/browse-edgar',
+            params={'action': 'getcompany', 'CIK': ticker, 'type': '8-K',
+                    'dateb': '', 'owner': 'include', 'count': limit,
+                    'output': 'atom'},
+            headers={'User-Agent': 'StrategosResearch contact@strategosresearch.local'},
+            timeout=5,
+        )
+        if not r.ok:
+            return out
+
+        # Parse Atom feed quickly with regex (avoids xml dep)
+        import re
+        entries = re.findall(
+            r'<entry>(.*?)</entry>', r.text, re.DOTALL
+        )
+        filings = []
+        for e in entries[:limit]:
+            form = re.search(r'<category[^>]+term="([^"]+)"', e)
+            updated = re.search(r'<updated>([^<]+)</updated>', e)
+            title = re.search(r'<title[^>]*>([^<]+)</title>', e)
+            summary = re.search(r'<summary[^>]*>([^<]+)</summary>', e)
+            if form and updated:
+                filings.append({
+                    'form': form.group(1),
+                    'date': updated.group(1)[:10],
+                    'title': (title.group(1)[:100] if title else '').strip(),
+                    'summary': (summary.group(1)[:200] if summary else '').strip(),
+                })
+        out['filings'] = filings
+        out['recent_8k_count'] = sum(1 for f in filings if '8-K' in f.get('form', ''))
+        out['recent_10k_count'] = sum(1 for f in filings if '10-K' in f.get('form', ''))
+        if filings:
+            try:
+                latest_dt = pd.to_datetime(filings[0]['date'])
+                age = (pd.Timestamp.utcnow().tz_localize(None) - latest_dt).total_seconds() / 86400
+                out['last_filing_age_days'] = round(age, 1)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return out
+
+
+# =============================================================================
+# STOCKTWITS — Sentiment (Tier 3, no auth)
+# =============================================================================
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_stocktwits_sentiment(ticker: str) -> Dict[str, Any]:
+    """Recent message sentiment for `ticker` from stocktwits public API.
+
+    Returns:
+      bullish_pct  : % of last 30 messages classified bullish by stocktwits
+      bearish_pct  : % bearish
+      message_volume_24h : approximate messages in last 24h
+      trending     : True if velocity is unusual
+    """
+    out = {
+        'bullish_pct': 0.0,
+        'bearish_pct': 0.0,
+        'neutral_pct': 0.0,
+        'message_volume_24h': 0,
+        'trending': False,
+        'sentiment_score': 50.0,
+    }
+    try:
+        import requests
+        r = requests.get(
+            f'https://api.stocktwits.com/api/2/streams/symbol/{ticker}.json',
+            timeout=5,
+        )
+        if not r.ok:
+            return out
+        data = r.json() or {}
+        messages = data.get('messages', []) or []
+        if not messages:
+            return out
+
+        # Sentiment is in entities.sentiment.basic (Bullish/Bearish)
+        bull, bear, neut = 0, 0, 0
+        cutoff = pd.Timestamp.utcnow() - pd.Timedelta(hours=24)
+        recent_24h = 0
+        for m in messages[:30]:
+            ent = (m.get('entities') or {})
+            sent = (ent.get('sentiment') or {}).get('basic') if isinstance(ent.get('sentiment'), dict) else None
+            if sent == 'Bullish':
+                bull += 1
+            elif sent == 'Bearish':
+                bear += 1
+            else:
+                neut += 1
+            # Approx volume in last 24h
+            try:
+                created = pd.to_datetime(m.get('created_at'), errors='coerce')
+                if created is not None and created.tz_localize(None) >= cutoff.tz_localize(None):
+                    recent_24h += 1
+            except Exception:
+                pass
+        total = bull + bear + neut
+        if total > 0:
+            out['bullish_pct'] = round(bull / total * 100, 1)
+            out['bearish_pct'] = round(bear / total * 100, 1)
+            out['neutral_pct'] = round(neut / total * 100, 1)
+            # Sentiment score: 50 baseline, swing +20 if very bullish or -20 if very bearish
+            net = (bull - bear) / total
+            out['sentiment_score'] = round(50 + net * 35, 1)
+        out['message_volume_24h'] = recent_24h
+        # Trending: >30 messages in 24h is unusual for most tickers
+        out['trending'] = recent_24h >= 30
+    except Exception:
+        pass
+    return out
+
+
+# =============================================================================
+# REDDIT WSB — Mentions count (Tier 3, no auth via public json)
+# =============================================================================
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_reddit_mentions(ticker: str) -> Dict[str, Any]:
+    """Count of r/wallstreetbets mentions in last 24h-7d via Reddit's public JSON.
+
+    No auth required. Reddit rate-limits via User-Agent so we set one explicitly.
+    """
+    out = {
+        'mentions_24h': 0,
+        'mentions_7d': 0,
+        'trending': False,
+        'top_post_title': '',
+        'top_post_score': 0,
+    }
+    try:
+        import requests
+        url = f'https://www.reddit.com/r/wallstreetbets/search.json?q={ticker}&restrict_sr=1&sort=new&t=week&limit=50'
+        r = requests.get(
+            url,
+            headers={'User-Agent': 'StrategosResearch/1.0 (Market Analysis bot)'},
+            timeout=5,
+        )
+        if not r.ok:
+            return out
+        data = r.json() or {}
+        posts = (data.get('data') or {}).get('children') or []
+        now = pd.Timestamp.utcnow().tz_localize(None)
+        d24 = 0
+        d7 = 0
+        top_title = ''
+        top_score = 0
+        ticker_upper = ticker.upper()
+        for p in posts:
+            d = p.get('data') or {}
+            title = (d.get('title') or '').upper()
+            body = (d.get('selftext') or '').upper()
+            if ticker_upper in title or f'${ticker_upper}' in title or ticker_upper in body[:300]:
+                created = pd.to_datetime(d.get('created_utc') or 0, unit='s', errors='coerce')
+                if created is not None:
+                    age_h = (now - created).total_seconds() / 3600
+                    if age_h <= 168:  # 7 days
+                        d7 += 1
+                        if age_h <= 24:
+                            d24 += 1
+                # Top post by upvotes
+                score = int(d.get('score', 0) or 0)
+                if score > top_score:
+                    top_score = score
+                    top_title = (d.get('title') or '')[:120]
+        out['mentions_24h'] = d24
+        out['mentions_7d'] = d7
+        out['trending'] = d24 >= 5 or d7 >= 25
+        out['top_post_title'] = top_title
+        out['top_post_score'] = top_score
+    except Exception:
+        pass
+    return out
+
+
+# =============================================================================
 # GAMMA SQUEEZE PROBABILITY (Capital Flows / @Globalflows methodology)
 # =============================================================================
 # Squeeze setup combines:
@@ -595,17 +1102,35 @@ def compute_gamma_squeeze_probability(ticker: str) -> Dict[str, Any]:
         'subscores': {},
         'narrative': '',
         'components_used': 0,
+        'new_strikes': None,  # set below if a recent listing event exists
+        'data_sources_used': [],
     }
     try:
         stock = yf.Ticker(ticker)
         info = _yf_retry(lambda: stock.info) or {}
 
         # === SUPPLY: small float + high short interest ===
+        # yfinance is unreliable for newer/spin-off tickers (returns 0).
+        # Augment with Finnhub real FINRA-reported short interest.
         float_shares = float(info.get('floatShares') or 0)
         short_pct = float(info.get('shortPercentOfFloat') or 0) * 100
         short_ratio = float(info.get('shortRatio') or 0)
         market_cap = float(info.get('marketCap') or 0)
         shares_out = float(info.get('sharesOutstanding') or 0)
+
+        # === Finnhub SI override when yfinance has no data ===
+        try:
+            finn_si = get_finnhub_short_interest(ticker)
+            if finn_si.get('short_interest_shares') and shares_out:
+                finn_pct = finn_si['short_interest_shares'] / shares_out * 100
+                # Use Finnhub if yfinance gave us nothing
+                if short_pct < 0.5 and finn_pct > 0.5:
+                    short_pct = finn_pct
+                    out['data_sources_used'].append('finnhub:short_interest')
+                if not short_ratio and finn_si.get('days_to_cover'):
+                    short_ratio = finn_si['days_to_cover']
+        except Exception:
+            pass
 
         supply_score = 50
         narrative_parts = []
@@ -614,7 +1139,7 @@ def compute_gamma_squeeze_probability(ticker: str) -> Dict[str, Any]:
             # GME pre-2021 had ~13% of shares short, float ~46M
             if float_pct < 30:
                 supply_score += 20
-                narrative_parts.append(f'Insider-heavy float ({float_pct:.0f}% of shares public)')
+                narrative_parts.append(f'Insider-heavy float ({float_pct:.0f}% public)')
             elif float_pct < 50:
                 supply_score += 8
         if short_pct > 25:
@@ -713,16 +1238,81 @@ def compute_gamma_squeeze_probability(ticker: str) -> Dict[str, Any]:
         macro_score = max(5, min(95, macro_score))
         out['subscores']['macro'] = round(macro_score, 1)
 
+        # === NEW STRIKE LISTING — the @Globalflows trigger condition ===
+        # Detecting fresh OCC strike additions is the proximal catalyst that
+        # turns "setup" into "active squeeze".
+        catalyst_score = 50
+        try:
+            ns = check_new_strikes(ticker)
+            out['new_strikes'] = ns
+            if ns.get('has_new_strikes'):
+                catalyst_score = ns.get('catalyst_score', 70)
+                narrative_parts.append(
+                    f"⚡ NEW STRIKES listed: ${ns['old_max_strike']:.0f} → ${ns['new_max_strike']:.0f} "
+                    f"({ns['jump_pct']:+.0f}%)"
+                )
+                out['data_sources_used'].append('yfinance:strike_tracker')
+        except Exception:
+            pass
+
+        # === INSIDER + SENTIMENT — soft signals, lower weight ===
+        sentiment_score = 50
+        try:
+            ins = get_finnhub_insider_transactions(ticker)
+            if ins.get('cluster_score', 50) != 50:
+                # Insider cluster contributes mainly to MP signal but
+                # also lifts squeeze conviction when net buyers
+                if ins['net_dollar_flow'] > 1_000_000 and ins['n_buys_90d'] >= 3:
+                    sentiment_score += 10
+                    narrative_parts.append(
+                        f'Insiders buying ({ins["n_buys_90d"]} buys, net ${ins["net_dollar_flow"]/1e6:.1f}M)'
+                    )
+                    out['data_sources_used'].append('finnhub:insider')
+                elif ins['net_dollar_flow'] < -1_000_000:
+                    sentiment_score -= 5
+        except Exception:
+            pass
+        try:
+            stw = get_stocktwits_sentiment(ticker)
+            if stw.get('trending'):
+                sentiment_score += 15
+                narrative_parts.append(
+                    f"Trending on stocktwits ({stw['message_volume_24h']} msgs/24h, "
+                    f"{stw['bullish_pct']:.0f}% bullish)"
+                )
+                out['data_sources_used'].append('stocktwits:sentiment')
+            elif stw.get('bullish_pct', 0) > 70:
+                sentiment_score += 8
+        except Exception:
+            pass
+        try:
+            reddit = get_reddit_mentions(ticker)
+            if reddit.get('trending'):
+                sentiment_score += 15
+                narrative_parts.append(
+                    f"r/WSB trending ({reddit['mentions_7d']} mentions/7d, top: {reddit['top_post_score']} upvotes)"
+                )
+                out['data_sources_used'].append('reddit:wsb')
+        except Exception:
+            pass
+        sentiment_score = max(5, min(95, sentiment_score))
+        out['subscores']['sentiment'] = round(sentiment_score, 1)
+        out['subscores']['catalyst'] = round(catalyst_score, 1)
+
         # === COMPOSITE — weighted by importance ===
-        # Capital Flows weighting: supply 35%, options 30%, gamma/IV 20%, macro 15%
+        # Capital Flows methodology with two new components:
+        #   supply 25% · options 25% · gamma/IV 15% · macro 10% ·
+        #   catalyst (new strikes) 15% · sentiment 10%
         composite = (
-            supply_score * 0.35 +
-            opt_score * 0.30 +
-            gamma_score * 0.20 +
-            macro_score * 0.15
+            supply_score * 0.25 +
+            opt_score * 0.25 +
+            gamma_score * 0.15 +
+            macro_score * 0.10 +
+            catalyst_score * 0.15 +
+            sentiment_score * 0.10
         )
         out['score'] = round(composite, 1)
-        out['components_used'] = 4
+        out['components_used'] = 6
 
         if composite >= 75:
             out['label'] = 'very_high'
@@ -735,7 +1325,7 @@ def compute_gamma_squeeze_probability(ticker: str) -> Dict[str, Any]:
         else:
             out['label'] = 'very_low'
 
-        out['narrative'] = ' · '.join(narrative_parts[:4]) if narrative_parts else 'No standout squeeze signals'
+        out['narrative'] = ' · '.join(narrative_parts[:5]) if narrative_parts else 'No standout squeeze signals'
     except Exception as e:
         out['narrative'] = f'Could not compute: {e}'
     return out

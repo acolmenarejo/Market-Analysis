@@ -3249,6 +3249,61 @@ def show_stock_analysis():
         st.warning(t('error.low_data_warning', ticker=ticker), icon="⚠️")
 
     # =========================================================================
+    # 🚨 NEW STRIKES LISTED — top-priority alert for 7 days after detection
+    # =========================================================================
+    # When OCC lists new (higher) option strikes for a ticker, it's the
+    # catalyst @Globalflows identifies as the trigger for gamma squeezes.
+    # We show a BIG yellow alert at the very top of the analysis so traders
+    # don't miss this event.
+    try:
+        from webapp.data.providers import check_new_strikes
+        ns = check_new_strikes(ticker)
+        if ns.get('has_new_strikes'):
+            jump = ns.get('jump_pct', 0)
+            new_max = ns.get('new_max_strike', 0)
+            old_max = ns.get('old_max_strike', 0)
+            n_exps = len(ns.get('affected_expirations', []))
+            age = ns.get('event_age_days') or 0
+            days_left = max(0, 7 - int(age))
+            st.markdown(f"""
+            <div style="background:linear-gradient(135deg, rgba(245,158,11,0.18), rgba(239,68,68,0.10));
+                        border:2px solid #f59e0b; border-radius:14px; padding:18px 22px;
+                        margin:14px 0; box-shadow:0 4px 20px rgba(245,158,11,0.25);">
+                <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+                    <div style="font-size:2.2rem;">🚨</div>
+                    <div style="flex:1; min-width:260px;">
+                        <div style="font-size:0.7rem; text-transform:uppercase; letter-spacing:1px;
+                                    color:#fbbf24; font-weight:700;">
+                            NEW OPTION STRIKES LISTED — squeeze-trigger catalyst
+                        </div>
+                        <div style="font-size:1.15rem; color:#fef3c7; font-weight:700; margin-top:4px;">
+                            Max strike ${old_max:,.0f} → ${new_max:,.0f} ({jump:+.0f}%)
+                            <span style="font-size:0.85rem; color:#fcd34d; font-weight:500;">
+                                · {n_exps} expiration{'s' if n_exps != 1 else ''} · detected {age:.0f}d ago
+                            </span>
+                        </div>
+                        <div style="font-size:0.8rem; color:#fde68a; margin-top:6px; line-height:1.5;">
+                            Per @Globalflows methodology: when OCC lists higher strikes, far-OTM call buying
+                            becomes possible and market-makers can't pre-hedge above the old ceiling.
+                            This is the trigger that turns a setup into an active squeeze.
+                        </div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div style="font-size:0.65rem; color:#fbbf24; text-transform:uppercase;">
+                            Alert active for
+                        </div>
+                        <div style="font-size:1.5rem; font-weight:800; color:#fbbf24;">
+                            {days_left}d
+                        </div>
+                        <div style="font-size:0.65rem; color:#fcd34d;">more</div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    except Exception:
+        pass
+
+    # =========================================================================
     # DIGITAL ASSET TREASURY (DAT) card — for tickers like PURR/MSTR that
     # are valued on holdings, not earnings. Computes mNAV (market cap / NAV
     # of treasury holdings) and shows premium/discount to NAV.
