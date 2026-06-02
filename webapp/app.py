@@ -838,108 +838,19 @@ def init_session_state():
     if 'current_page_index' not in st.session_state:
         st.session_state.current_page_index = 0
     if 'lang' not in st.session_state:
-        st.session_state.lang = 'es'
+        # Default to ENGLISH for the financial audience. Users can switch
+        # to Spanish (or any added locale) via the language selector.
+        st.session_state.lang = 'en'
 
 
 # =============================================================================
-# TRANSLATIONS
+# TRANSLATIONS — loaded from webapp/i18n/locales/{en,es}.json
 # =============================================================================
-_T = {
-    'es': {
-        'nav': 'Navegacion',
-        'dashboard': '🏠 Dashboard',
-        'stock_analysis': '📊 Stock Analysis',
-        'signals': '🔍 Signals',
-        'filters': 'Filtros',
-        'horizon': 'Horizonte',
-        'min_score': 'Score minimo',
-        'clean_cache': 'Limpiar Cache',
-        'cache_cleaned': 'Cache limpiado',
-        'universe': 'Universo',
-        'politicians': 'Politicos',
-        'hz_short': 'Corto Plazo (1-4 sem)',
-        'hz_mid': 'Medio Plazo (1-6 mes)',
-        'hz_long': 'Largo Plazo (6+ mes)',
-        'market_overview': 'Market Overview',
-        'market_subtitle': 'Panel de inteligencia de mercado en tiempo real',
-        'global_futures': 'Global Futures & Indices',
-        'risk_center': 'Risk Command Center',
-        'module_breakdown': 'Module Breakdown',
-        'alerts_patterns': 'Alerts & Patterns',
-        'sector_heatmap': 'Sector Heatmap',
-        'market_movers': 'Market Movers',
-        'gainers': 'Top Gainers',
-        'losers': 'Top Losers',
-        'most_active': 'Most Active',
-        'unusual_vol': 'Unusual Volume',
-        'liquidity': 'Liquidity & Top Picks',
-        'congress': 'Congress Insider Trades',
-        'load_congress': 'Cargar Congress Trades',
-        'earnings_cal': 'Earnings Calendar — Proximos 30 Dias',
-        'top_news': 'Top Market News',
-        'all_stocks': 'All Stocks Table',
-        'search_ticker': 'Buscar ticker',
-        'signals_page': 'Signals & Intelligence',
-        'signals_subtitle': 'Congress insider trades + Polymarket smart money',
-        'val_models': 'Modelos de Valoracion',
-        'val_interp': 'Interpretacion de modelos de valoracion',
-        'val_verdict': 'Veredicto valoracion',
-        'val_insufficient': 'Datos insuficientes para modelos de valoracion (se necesita EPS, Book Value y FCF)',
-        'intelligent_analysis': 'Analisis Inteligente',
-        'no_signals': 'Sin datos FRED (API key no configurada)',
-        'economic_indicators': 'Indicadores Economicos',
-    },
-    'en': {
-        'nav': 'Navigation',
-        'dashboard': '🏠 Dashboard',
-        'stock_analysis': '📊 Stock Analysis',
-        'signals': '🔍 Signals',
-        'filters': 'Filters',
-        'horizon': 'Horizon',
-        'min_score': 'Min score',
-        'clean_cache': 'Clear Cache',
-        'cache_cleaned': 'Cache cleared',
-        'universe': 'Universe',
-        'politicians': 'Politicians',
-        'hz_short': 'Short Term (1-4 wk)',
-        'hz_mid': 'Medium Term (1-6 mo)',
-        'hz_long': 'Long Term (6+ mo)',
-        'market_overview': 'Market Overview',
-        'market_subtitle': 'Real-time market intelligence dashboard',
-        'global_futures': 'Global Futures & Indices',
-        'risk_center': 'Risk Command Center',
-        'module_breakdown': 'Module Breakdown',
-        'alerts_patterns': 'Alerts & Patterns',
-        'sector_heatmap': 'Sector Heatmap',
-        'market_movers': 'Market Movers',
-        'gainers': 'Top Gainers',
-        'losers': 'Top Losers',
-        'most_active': 'Most Active',
-        'unusual_vol': 'Unusual Volume',
-        'liquidity': 'Liquidity & Top Picks',
-        'congress': 'Congress Insider Trades',
-        'load_congress': 'Load Congress Trades',
-        'earnings_cal': 'Earnings Calendar — Next 30 Days',
-        'top_news': 'Top Market News',
-        'all_stocks': 'All Stocks Table',
-        'search_ticker': 'Search ticker',
-        'signals_page': 'Signals & Intelligence',
-        'signals_subtitle': 'Congress insider trades + Polymarket smart money',
-        'val_models': 'Valuation Models',
-        'val_interp': 'Valuation model interpretation',
-        'val_verdict': 'Valuation verdict',
-        'val_insufficient': 'Insufficient data for valuation models (EPS, Book Value and FCF required)',
-        'intelligent_analysis': 'Intelligent Analysis',
-        'no_signals': 'No FRED data (API key not set)',
-        'economic_indicators': 'Economic Indicators',
-    },
-}
-
-
-def t(key: str) -> str:
-    """Get translated string for current language."""
-    lang = st.session_state.get('lang', 'es')
-    return _T.get(lang, _T['es']).get(key, _T['es'].get(key, key))
+# Single source of truth is the i18n module. Calls to t() throughout the app
+# read from the active language (st.session_state.lang) and fall back to
+# English if a key is missing in the active locale. Default language is
+# English (set in init_session_state above).
+from webapp.i18n import t, get_supported_languages, set_current_lang  # noqa: E402
 
 
 def navigate_to_stock(ticker: str):
@@ -1818,9 +1729,17 @@ def main():
             st.session_state.current_page_index = 3
             st.rerun()
     with nav_cols[5]:
-        lang = st.session_state.lang
-        if st.button("🇪🇸" if lang == 'en' else "🇬🇧", use_container_width=True, key="nav_lang"):
-            st.session_state.lang = 'en' if lang == 'es' else 'es'
+        # Language selector: button cycles through supported locales loaded
+        # from webapp/i18n/locales/. The flag shown represents the language
+        # the user would SWITCH TO if they click it.
+        _langs = get_supported_languages()
+        _cur = st.session_state.lang
+        _next = _langs[(next((i for i, L in enumerate(_langs) if L['code'] == _cur), 0) + 1) % len(_langs)]
+        _flag_map = {'en': '🇬🇧', 'es': '🇪🇸', 'pt': '🇵🇹', 'fr': '🇫🇷'}
+        if st.button(_flag_map.get(_next['code'], _next['code'].upper()),
+                     help=f"Switch to {_next['label']}",
+                     use_container_width=True, key="nav_lang"):
+            set_current_lang(_next['code'])
             st.rerun()
     with nav_cols[6]:
         if st.button("🗑", use_container_width=True, key="nav_cache"):
@@ -3139,7 +3058,7 @@ def show_stock_analysis():
     if 'error' in data:
         if data.get('error') == 'rate_limited':
             st.warning(f"⚠️ {data.get('error_message', 'Rate limited by Yahoo Finance.')}")
-            if st.button("🔄 Reintentar", key=f"rl_retry_{ticker}", type="primary"):
+            if st.button(t("common.retry"), key=f"rl_retry_{ticker}", type="primary"):
                 get_stock_data.clear()
                 st.rerun()
             return
@@ -3249,7 +3168,7 @@ def show_stock_analysis():
         <div style="background:linear-gradient(135deg, rgba(26,26,46,0.95), rgba(22,33,62,0.95));
                     border:1px solid rgba(99,102,241,0.3); border-radius:12px; padding:18px; margin:12px 0;">
             <div style="font-size:0.8rem; text-transform:uppercase; letter-spacing:0.8px; color:#a5b4fc; font-weight:600; margin-bottom:8px;">
-                Analisis del Score
+                {t('score.title')}
             </div>
             <div style="font-size:0.95rem; color:#e2e8f0; line-height:1.5;">{explanation.get('summary', '')}</div>
         </div>
@@ -3283,7 +3202,7 @@ def show_stock_analysis():
                     for f in bull:
                         st.caption(f"  ↑ {f[0]}: {f[2]}")
                 else:
-                    st.caption("Sin factores alcistas destacados")
+                    st.caption(t('score.no_bullish_factors'))
             with c2:
                 if bear:
                     bear_html = " ".join([f'<span class="factor-pill-bear">-{f[1]:.0f} {f[0]}</span>' for f in bear])
@@ -3291,7 +3210,7 @@ def show_stock_analysis():
                     for f in bear:
                         st.caption(f"  ↓ {f[0]}: {f[2]}")
                 else:
-                    st.caption("Sin riesgos destacados")
+                    st.caption(t('score.no_bearish_factors'))
 
     # =========================================================================
     # COMPANY OVERVIEW: Business, Cash Flow, Sector Trends
@@ -3360,7 +3279,7 @@ def show_stock_analysis():
     # =========================================================================
     # 4 TABS: Technical, Fundamental, Options, Intelligence
     # =========================================================================
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 Chart & Tecnicos", "📊 Fundamentales", "🔗 Options & Gamma", "🔍 Intelligence"])
+    tab1, tab2, tab3, tab4 = st.tabs([t('tab_chart'), t('tab_fundamentals'), t('tab_options'), t('tab_intelligence')])
 
     with tab1:
         _show_technical_tab(ticker, data)
@@ -3397,7 +3316,7 @@ def _show_technical_tab(ticker: str, data: dict):
             "MAX": ("max",  "1mo"),   # máximo - velas mensuales
         }
         selected_tf = st.radio(
-            "Periodo",
+            t('technical.period'),
             list(timeframes.keys()),
             index=4,  # default to 6M
             horizontal=True,
@@ -3415,7 +3334,7 @@ def _show_technical_tab(ticker: str, data: dict):
         if _new_hist is not None and not _new_hist.empty:
             data['history'] = _new_hist
         elif _new_hist is None:
-            st.caption("⚠️ Yahoo rate limit alcanzado en este periodo — mostrando histórico 6M en cache.")
+            st.caption(t("rate_limit.history_warn"))
     except Exception:
         pass
 
@@ -3610,16 +3529,16 @@ def _show_technical_tab(ticker: str, data: dict):
                 la = konkorde['azul'].iloc[-1]
                 lv = konkorde['verde'].iloc[-1]
                 if la > 0 and lv > 0:
-                    st.success("**Konkorde:** Institucionales Y retail comprando - Tendencia alcista fuerte")
+                    st.success(t('technical.konkorde_strong_bull'))
                 elif la > 0 and lv < 0:
-                    st.info("**Konkorde:** Institucionales acumulando, retail vendiendo - Posible suelo")
+                    st.info(t('technical.konkorde_accum'))
                 elif la < 0 and lv > 0:
-                    st.warning("**Konkorde:** Institucionales distribuyendo, retail comprando - Precaucion")
+                    st.warning(t('technical.konkorde_dist'))
                 else:
-                    st.error("**Konkorde:** Ambos vendiendo - Tendencia bajista")
+                    st.error(t('technical.konkorde_strong_bear'))
 
     with col_indicators:
-        st.markdown("### Indicadores Clave")
+        st.markdown(f"### {t('technical.indicators_title')}")
         rsi = data['rsi']
         rsi_color = "🟢" if rsi < 30 else ("🔴" if rsi > 70 else "🟡")
         rsi_signal = "Sobreventa" if rsi < 30 else ("Sobrecompra" if rsi > 70 else "Neutral")
@@ -3637,7 +3556,7 @@ def _show_technical_tab(ticker: str, data: dict):
         st.metric("Vol vs Media", f"{vol_ratio:.1f}x", vol_sig)
 
         st.markdown("---")
-        st.markdown("**Indicadores Medio Plazo**")
+        st.markdown(f"**{t('technical.medium_term_indicators')}**")
 
         # Supertrend
         st_signal = supertrend.get('signal', 'neutral')
@@ -3707,47 +3626,44 @@ def _show_technical_tab(ticker: str, data: dict):
     confluence_score = 0
     if st_signal in ('bullish', 'bullish_flip'):
         confluence_score += 2 if st_signal == 'bullish_flip' else 1
-        confluence_signals.append(f"Supertrend {'cambió a alcista' if st_signal == 'bullish_flip' else 'alcista'}")
+        confluence_signals.append(t('factor.supertrend_bullish_flip' if st_signal == 'bullish_flip' else 'factor.supertrend_bullish'))
     if stoch_bull_cross:
         confluence_score += 2
-        confluence_signals.append("Stoch RSI cruce alcista en sobreventa")
+        confluence_signals.append(t('factor.stoch_oversold_cross'))
     elif stoch_k < 20:
         confluence_score += 1
-        confluence_signals.append("Stoch RSI en sobreventa")
+        confluence_signals.append(t('factor.rsi_oversold'))
     if adx_val >= 25 and di_plus > di_minus:
         confluence_score += 2 if adx_val >= 40 else 1
-        confluence_signals.append(f"ADX {adx_val:.0f} confirma tendencia alcista")
+        confluence_signals.append(t('factor.adx_uptrend', adx=adx_val))
     if obv_above:
         confluence_score += 1
-        confluence_signals.append("OBV: acumulación de volumen")
+        confluence_signals.append(t('factor.obv_accumulation'))
     if data.get('macd_bullish'):
         confluence_score += 1
-        confluence_signals.append("MACD alcista")
+        confluence_signals.append(t('factor.macd_bullish'))
     if data['rsi'] < 40 and data['rsi'] > 25:
         confluence_score += 1
-        confluence_signals.append("RSI en zona de oportunidad")
+        confluence_signals.append(t('factor.rsi_opportunity_zone'))
 
     confluence_max = 10
     confluence_pct = (confluence_score / confluence_max) * 100
+    _signals_str = " · ".join(confluence_signals[:4])
 
     if confluence_score >= 6:
-        st.success(
-            f"**Confluencia Compra MP: {confluence_score}/{confluence_max} ({confluence_pct:.0f}%)** — Setup fuerte. "
-            + " · ".join(confluence_signals[:4])
-        )
+        st.success(t('technical.confluence_strong',
+                     score=confluence_score, max_score=confluence_max,
+                     pct=confluence_pct, signals=_signals_str))
     elif confluence_score >= 4:
-        st.info(
-            f"**Confluencia Compra MP: {confluence_score}/{confluence_max}** — Señales mixtas con sesgo positivo. "
-            + " · ".join(confluence_signals[:4])
-        )
+        st.info(t('technical.confluence_mixed',
+                  score=confluence_score, max_score=confluence_max,
+                  signals=_signals_str))
     elif confluence_score >= 2:
-        st.warning(
-            f"**Confluencia Compra MP: {confluence_score}/{confluence_max}** — Setup débil. Esperar confirmación."
-        )
+        st.warning(t('technical.confluence_weak',
+                     score=confluence_score, max_score=confluence_max))
     else:
-        st.error(
-            f"**Confluencia Compra MP: {confluence_score}/{confluence_max}** — No hay setup de compra. Tendencia adversa."
-        )
+        st.error(t('technical.confluence_none',
+                   score=confluence_score, max_score=confluence_max))
 
 
 def _show_options_tab(ticker: str, data: dict):
@@ -3780,17 +3696,14 @@ def _show_options_tab(ticker: str, data: dict):
             st.session_state[_exp_cache_key] = expirations
 
     if not expirations:
-        st.warning(
-            "⚠️ Yahoo Finance limitó las peticiones de opciones (rate limit). "
-            "Esto suele resolverse en 30-60 segundos."
-        )
+        st.warning(t("options.rate_limit_warn"))
         col_r1, col_r2 = st.columns([1, 4])
         with col_r1:
             if st.button("🔄 Reintentar", key=f"opt_retry_{ticker}", type="primary"):
                 st.session_state.pop(_exp_cache_key, None)
                 st.rerun()
         with col_r2:
-            st.caption("Mientras tanto puedes consultar el chart técnico y los fundamentales.")
+            st.caption(t("options.rate_limit_hint"))
         return
 
     # Controls row
@@ -3815,7 +3728,7 @@ def _show_options_tab(ticker: str, data: dict):
             f"⚠️ Yahoo rate-limit al cargar la cadena {selected_exp}. "
             "Espera 30s y pulsa Reintentar."
         )
-        if st.button("🔄 Reintentar cadena", key=f"opt_chain_retry_{ticker}_{selected_exp}"):
+        if st.button(t("options.retry_chain"), key=f"opt_chain_retry_{ticker}_{selected_exp}"):
             st.session_state.pop(_chain_cache_key, None)
             st.rerun()
         return
@@ -3823,7 +3736,7 @@ def _show_options_tab(ticker: str, data: dict):
     puts = chain.puts.copy()
 
     if calls.empty and puts.empty:
-        st.warning("No hay datos de opciones para esta expiracion.")
+        st.warning(t("options.no_exp_data"))
         return
 
     # Clean NaN in openInterest/volume globally
@@ -4144,7 +4057,7 @@ El percentil compara el valor actual vs historico del ticker para detectar extre
                 <span style="color:#f85149; font-size:0.85rem;">{max_iv_row['exp']} ({max_iv_row['iv']:.1f}%)</span>
             </div>""", unsafe_allow_html=True)
         else:
-            st.info("Datos insuficientes para IV Term Structure (se necesitan al menos 2 expirations)")
+            st.info("Insufficient data for IV Term Structure (need at least 2 expirations)" if st.session_state.get("lang","en")=="en" else "Datos insuficientes para IV Term Structure (se necesitan al menos 2 expirations)")
     except Exception as e:
         st.warning(f"No se pudo calcular IV Term Structure: {e}")
 
@@ -5100,7 +5013,7 @@ def _show_fundamental_tab(ticker: str, data: dict):
     # Reload button — clears caches so partial/stale data can be re-fetched
     _col_reload, _col_hint = st.columns([1, 4])
     with _col_reload:
-        if st.button("🔄 Recargar datos", key=f"fund_reload_{ticker}", help="Limpia caché y recarga fundamentales"):
+        if st.button(t("common.reload"), key=f"fund_reload_{ticker}", help=t("fundamental.reload_help")):
             get_stock_data.clear()
             get_multi_horizon_scores.clear()
             st.rerun()
@@ -5110,7 +5023,7 @@ def _show_fundamental_tab(ticker: str, data: dict):
                                 'total_debt', 'revenue_growth')
                    if not data.get(k))
         if n_na >= 5:
-            st.caption("⚠️ Varios campos N/A — Yahoo limitó endpoints profundos. Pulsa Recargar en unos segundos.")
+            st.caption(t("fundamental.warning_na"))
 
     # =========================================================================
     # ROW 1: STYLED RATIO CARDS (4 columns)
@@ -5238,7 +5151,7 @@ def _show_fundamental_tab(ticker: str, data: dict):
     # HISTORICAL P/E CHART
     # =========================================================================
     st.markdown("---")
-    with st.expander("📊 P/E Histórico (hasta 10 años)", expanded=False):
+    with st.expander(t("fundamental.pe_history"), expanded=False):
         from webapp.data.providers import get_historical_pe
         import plotly.graph_objects as _go_pe
         _pe_hist = get_historical_pe(ticker)
@@ -5311,7 +5224,7 @@ def _show_fundamental_tab(ticker: str, data: dict):
     # ROW 2: VALUATION MODELS
     # =========================================================================
     st.markdown("---")
-    st.markdown("### Modelos de Valoracion")
+    st.markdown(f"### {t('val_models')}")
 
     eps = data.get('trailing_eps', 0) or 0
     fwd_eps = data.get('forward_eps', 0) or 0
@@ -5507,11 +5420,11 @@ def _show_fundamental_tab(ticker: str, data: dict):
             interpretations.append(f'<b style="color:#58a6ff;">Veredicto valoracion:</b> {verdict}')
 
         if interpretations:
-            with st.expander("Interpretacion de modelos de valoracion", expanded=True):
+            with st.expander(t('val_interp'), expanded=True):
                 for interp in interpretations:
                     st.markdown(f'<div style="background:#161b22; padding:8px 12px; border-radius:6px; margin-bottom:4px; border-left:3px solid #30363d; font-size:0.78rem; color:#e6edf3; line-height:1.5;">{interp}</div>', unsafe_allow_html=True)
     else:
-        st.info("Datos insuficientes para modelos de valoracion (se necesita EPS, Book Value y FCF)")
+        st.info(t("val_insufficient"))
 
     # =========================================================================
     # ROW 3: INTELLIGENT ANALYSIS
@@ -6096,7 +6009,7 @@ def show_score_page():
     # BACKTESTING VALIDATION SECTION
     # =========================================================================
     st.markdown("---")
-    with st.expander("Backtesting Profesional — 60 stocks · 3 años · costes incluidos · IS/OOS split", expanded=False):
+    with st.expander(t("backtest.title"), expanded=False):
         _render_backtest_results()
 
 
@@ -6303,7 +6216,7 @@ def _render_backtest_results():
     # ---- VIX Regime Analysis ----
     regime_stats = metrics.get('regime_stats', {})
     if regime_stats:
-        st.markdown("**Rendimiento por Régimen VIX (^VIX real)**")
+        st.markdown(f"**{t('factor.vix_regime_perf')}**".replace("**", "**", 1))
         regime_rows = ""
         regime_icons = {'low_vol': '🟢', 'normal': '🔵', 'high_vol': '🟡', 'crisis': '🔴'}
         regime_labels = {'low_vol': 'Low Vol (VIX&lt;15)', 'normal': 'Normal (15-22)',
@@ -6546,7 +6459,7 @@ def _show_polymarket_tab():
         st.error(f"Error cargando Polymarket: {e}")
         return
 
-    if st.button("Actualizar Datos", key="poly_refresh"):
+    if st.button(t("polymarket.update_btn"), key="poly_refresh"):
         st.cache_data.clear()
         st.rerun()
 
@@ -6554,21 +6467,19 @@ def _show_polymarket_tab():
     # SECTION 1: SUSPICIOUS BETS (Insider Detection)
     # =========================================================================
     st.markdown("---")
-    st.markdown("""
+    st.markdown(f"""
     <div style="background:linear-gradient(135deg, rgba(239,68,68,0.12), rgba(249,115,22,0.08));
                 border:1px solid rgba(239,68,68,0.3); border-radius:12px; padding:16px; margin-bottom:16px;">
         <div style="font-size:1.1rem; font-weight:700; color:#f87171; margin-bottom:4px;">
-            🕵 Deteccion de Info Privilegiada
+            {t('polymarket.insider_detection')}
         </div>
         <div style="font-size:0.8rem; color:#94a3b8;">
-            Identifica apuestas con patrones sospechosos: volumen concentrado en 24h,
-            odds extremas, mercados con fechas especificas y actividad whale.
-            Ejemplo: alguien aposto &#36;400k a que Maduro seria detenido un dia concreto.
+            {t('polymarket.insider_subtitle')}
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    with st.spinner("Analizando apuestas sospechosas..."):
+    with st.spinner(t('polymarket.analyzing')):
         try:
             suspicious = client.detect_suspicious_bets()
             if suspicious:
@@ -6577,10 +6488,10 @@ def _show_polymarket_tab():
                 high_sus = len([s for s in suspicious if s['suspicion_score'] >= 70])
                 med_sus = len([s for s in suspicious if 50 <= s['suspicion_score'] < 70])
                 total_vol = sum(s['volume_24h'] for s in suspicious)
-                with c1: st.metric("Muy Sospechosas", high_sus)
-                with c2: st.metric("Sospechosas", med_sus)
-                with c3: st.metric("Total Detectadas", len(suspicious))
-                with c4: st.metric("Vol Agregado 24h", f"${total_vol/1000:.0f}k")
+                with c1: st.metric(t('polymarket.very_suspicious'), high_sus)
+                with c2: st.metric(t('polymarket.suspicious'), med_sus)
+                with c3: st.metric(t('polymarket.total_detected'), len(suspicious))
+                with c4: st.metric(t('polymarket.agg_vol_24h'), f"${total_vol/1000:.0f}k")
 
                 for i, bet in enumerate(suspicious):
                     sus_score = bet['suspicion_score']
@@ -6637,18 +6548,18 @@ def _show_polymarket_tab():
                     )
                     st.markdown(card_html, unsafe_allow_html=True)
             else:
-                st.info("No se detectaron apuestas sospechosas actualmente")
+                st.info(t('polymarket.no_suspicious'))
         except Exception as e:
-            st.error(f"Error detectando apuestas sospechosas: {e}")
+            st.error(t('polymarket.detect_error', err=str(e)))
 
     # =========================================================================
     # SECTION 2: SMART MONEY ALERTS (Volume-based)
     # =========================================================================
     st.markdown("---")
-    st.markdown("### Smart Money Alerts")
-    st.caption("Mercados relevantes con volumen 24h significativo")
+    st.markdown(f"### {t('polymarket.smart_money_alerts')}")
+    st.caption(t('polymarket.alerts_caption'))
 
-    with st.spinner("Buscando Smart Money..."):
+    with st.spinner(t('polymarket.searching_alerts')):
         try:
             alerts = client.detect_smart_money_alerts()
             if alerts:
@@ -6675,7 +6586,7 @@ def _show_polymarket_tab():
                     <tbody>{alert_rows}</tbody>
                 </table></div>''', unsafe_allow_html=True)
             else:
-                st.info("Sin alertas de smart money actualmente")
+                st.info(t('polymarket.no_alerts'))
         except Exception as e:
             st.error(f"Error: {e}")
 
@@ -6683,8 +6594,8 @@ def _show_polymarket_tab():
     # SECTION 3: RELEVANT MARKETS
     # =========================================================================
     st.markdown("---")
-    st.markdown("### Mercados Relevantes para Inversion")
-    with st.spinner("Cargando mercados..."):
+    st.markdown(f"### {t('polymarket.relevant_markets')}")
+    with st.spinner(t('polymarket.loading_markets')):
         try:
             markets = client.get_relevant_markets(limit=20)
             if markets:
