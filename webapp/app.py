@@ -3057,7 +3057,11 @@ def show_stock_analysis():
 
     if 'error' in data:
         if data.get('error') == 'rate_limited':
-            st.warning(f"⚠️ {data.get('error_message', 'Rate limited by Yahoo Finance.')}")
+            # Provider returns an i18n KEY in error_message — translate here so
+            # the warning respects the user's language preference.
+            _msg_key = data.get('error_message', 'rate_limit.message')
+            _msg = t(_msg_key) if isinstance(_msg_key, str) and '.' in _msg_key else _msg_key
+            st.warning(f"⚠️ {_msg}")
             if st.button(t("common.retry"), key=f"rl_retry_{ticker}", type="primary"):
                 get_stock_data.clear()
                 st.rerun()

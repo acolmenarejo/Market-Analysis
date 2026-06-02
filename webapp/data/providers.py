@@ -697,14 +697,14 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
         # a friendly error so the UI can show a retry hint, rather than
         # rendering a page full of zeros.
         if hist is None and info is None:
+            # Note: actual message rendered via t('rate_limit.message') in the
+            # UI layer so it respects the user's language preference. The
+            # `error_message` field below is a fallback for any caller that
+            # bypasses the translation layer.
             return {
                 'ticker': ticker,
                 'error': 'rate_limited',
-                'error_message': (
-                    'Yahoo Finance ha limitado las peticiones (rate limit). '
-                    'Espera 30-60 segundos y pulsa "Reintentar". '
-                    'Los datos en cache de otros tickers siguen disponibles.'
-                ),
+                'error_message': 'rate_limit.message',  # i18n key
                 'price': 0, 'rsi': 50, 'macd_bullish': False, 'momentum_1m': 0,
             }
 
