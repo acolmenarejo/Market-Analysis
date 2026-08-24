@@ -3260,23 +3260,40 @@ def show_stock_analysis():
 
     st.markdown("---")
 
-    # Loading UX: on a ticker change, show a clear placeholder that occupies
-    # the content area while data loads, so the previous ticker's page isn't
-    # left faded in the background. The placeholder is emptied once data is in.
+    # Loading UX: on a ticker change, show a large placeholder that dominates
+    # the viewport while data loads, so the previous ticker's page isn't left
+    # faded in the background. Crucially we PRE-WARM the slow per-ticker caches
+    # (enriched scores ~15s, conviction) WHILE the placeholder is up — they're
+    # @st.cache_data, so the later render calls hit cache and the page paints
+    # near-instantly once the placeholder clears (instead of leaving stale
+    # faded content up for ~15s). The placeholder is emptied once all data is in.
     _content_ph = st.empty()
     _prev_loaded = st.session_state.get('_analysis_loaded_ticker')
-    if _prev_loaded != ticker:
+    _ticker_changed = _prev_loaded != ticker
+    if _ticker_changed:
         with _content_ph.container():
             st.markdown(
-                f"<div style='padding:60px 0; text-align:center; color:#8b949e;'>"
-                f"<div style='font-size:2rem;'>⏳</div>"
-                f"<div style='font-size:1.05rem; margin-top:8px;'>Cargando <b style='color:#e6edf3;'>{ticker}</b>…</div>"
+                f"<div style='min-height:55vh; display:flex; flex-direction:column; "
+                f"align-items:center; justify-content:center; color:#8b949e;'>"
+                f"<div style='font-size:3rem;'>⏳</div>"
+                f"<div style='font-size:1.2rem; margin-top:12px;'>Cargando "
+                f"<b style='color:#e6edf3;'>{ticker}</b>…</div>"
+                f"<div style='font-size:0.8rem; margin-top:6px; color:#6e7681;'>"
+                f"Analizando técnicos, fundamentales, opciones y convicción</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
 
     with st.spinner(f"Cargando {ticker}..."):
         data = get_stock_data(ticker)
+        # Pre-warm heavy per-ticker caches behind the loading screen.
+        if _ticker_changed and isinstance(data, dict) and 'error' not in data:
+            try:
+                from webapp.data.providers import get_enriched_scores, get_conviction_signals
+                get_enriched_scores(ticker)
+                get_conviction_signals(ticker)
+            except Exception:
+                pass
 
     _content_ph.empty()
     if isinstance(data, dict) and 'error' not in data:
@@ -3712,6 +3729,10 @@ def show_stock_analysis():
     country = data.get('country', 'N/A')
 
     if description:
+        # Collapse embedded newlines/whitespace to single spaces.
+        import re as _re_desc
+        description = _re_desc.sub(r'\s+', ' ', description).strip()
+
         def _fmt_num(n):
             if not n: return 'N/A'
             if abs(n) >= 1e12: return f"&#36;{n/1e12:.1f}T"
@@ -3723,7 +3744,7 @@ def show_stock_analysis():
         rev_color = '#3fb950' if revenue_growth >= 0 else '#f85149'
         rev_sign = '+' if revenue_growth >= 0 else ''
 
-        st.markdown(f"""
+        _overview_html = f"""
         <div style="background:#161b22; border:1px solid #21262d; border-radius:10px; padding:18px; margin:12px 0;">
             <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px;">
                 <div style="font-size:0.8rem; text-transform:uppercase; letter-spacing:0.8px; color:#58a6ff; font-weight:600;">
@@ -3760,7 +3781,18 @@ def show_stock_analysis():
                 </div>
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """
+        # Flatten to a single line before rendering. For an ETF (IWM, SPY…)
+        # with no country/employees, those conditional interpolations collapse
+        # to empty strings, leaving blank indented lines. A blank line
+        # TERMINATES Markdown's HTML block, after which the still-indented tags
+        # that follow are parsed as an indented CODE block and shown as raw
+        # <div> text. Stripping every line removes both the blank lines and the
+        # indentation, so the whole block always renders as HTML.
+        st.markdown(
+            ' '.join(_l.strip() for _l in _overview_html.splitlines() if _l.strip()),
+            unsafe_allow_html=True,
+        )
 
     # =========================================================================
     # 4 TABS: Technical, Fundamental, Options, Intelligence

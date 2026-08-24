@@ -413,6 +413,34 @@ def _detect_macro_regime(data: Dict[str, Any]) -> str:
     return 'normal'
 
 
+# Company-specific fundamental factors that DO NOT apply to an ETF / fund.
+# For an ETF (IWM, SPY, sector funds…) there is no ROE, margin, insider
+# activity, analyst revision, debt schedule or congressional trade — leaving
+# these at their raw 0/neutral values scored the ETF as if it were a terrible
+# company (e.g. IWM medium-term = 30). We neutralize them to 50 so the ETF is
+# scored on what actually applies: technicals, momentum, macro, options and
+# sector rotation.
+_ETF_NEUTRAL_FACTORS = frozenset({
+    'roe', 'roic', 'quality_gate', 'fama_quality', 'fama_value',
+    'fcf_quality', 'fcf_quality_mt', 'fcf_yield', 'pe_percentile',
+    'pb_percentile', 'ev_ebitda_percentile', 'peg_ratio', 'moat_score',
+    'margin_stability', 'earnings_stability', 'dividend_stability',
+    'debt_ebitda', 'interest_coverage', 'debt_trend', 'margin_trend',
+    'roic_trend_score', 'debt_maturity_risk_score', 'analyst_revisions_score',
+    'analyst_revisions', 'insider_cluster_score', 'earnings_streak_score',
+    'earnings_momentum', 'earnings_surprise', 'short_interest',
+    'congress_score', 'congress_long_term', 'institutional_flow',
+    'dividend_growth_years', 'value_composite', 'quality_composite',
+})
+
+
+def _neutralize_etf_fundamentals(components: Dict[str, float]) -> None:
+    """Set company-only fundamental components to 50 (no-signal) for ETFs."""
+    for k in list(components.keys()):
+        if k in _ETF_NEUTRAL_FACTORS:
+            components[k] = 50.0
+
+
 def _weighted_score(components: Dict[str, float], weights: Dict[str, float], amplifier: float = 1.0) -> float:
     """Compute a weighted score with effective-weight normalization.
 
@@ -828,6 +856,9 @@ class MultiHorizonScorer:
         pro_regime = data.get('macro_regime', 'neutral')
         active_weights = apply_regime_overrides(active_weights, pro_regime, 'short_term')
 
+        if data.get('is_etf'):
+            _neutralize_etf_fundamentals(components)
+
         # Score with effective-weight normalization + conviction amplifier
         total = _weighted_score(components, active_weights, amplifier=1.5)
 
@@ -1062,6 +1093,9 @@ class MultiHorizonScorer:
         # Apply professional macro regime overrides
         pro_regime = data.get('macro_regime', 'neutral')
         active_weights = apply_regime_overrides(weights, pro_regime, 'medium_term')
+
+        if data.get('is_etf'):
+            _neutralize_etf_fundamentals(components)
 
         # Score with effective-weight normalization + moderate amplifier
         total = _weighted_score(components, active_weights, amplifier=1.3)
@@ -1340,6 +1374,9 @@ class MultiHorizonScorer:
         # Apply professional macro regime overrides
         pro_regime = data.get('macro_regime', 'neutral')
         active_weights = apply_regime_overrides(weights, pro_regime, 'long_term')
+
+        if data.get('is_etf'):
+            _neutralize_etf_fundamentals(components)
 
         # Score with effective-weight normalization + mild amplifier for long-term
         total = _weighted_score(components, active_weights, amplifier=1.2)

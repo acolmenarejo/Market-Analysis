@@ -4839,6 +4839,7 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
 
                 scoring_data = {
                     'ticker': ticker,
+                    'is_etf': str(info.get('quoteType', '')).upper() in ('ETF', 'MUTUALFUND'),
                     'price': price_val,
                     'vwap': current_vwap,
                     'rsi_14': rsi,
@@ -6247,8 +6248,10 @@ def get_enriched_scores(ticker: str) -> Dict[str, Any]:
             opt_sig['st_pc_volume_ratio'] = _stf.get('pc_volume_ratio')
 
     # Build enriched scoring_data
+    _is_etf = str(info.get('quoteType', '')).upper() in ('ETF', 'MUTUALFUND')
     sd = {
         'ticker': ticker,
+        'is_etf': _is_etf,
         'price': stock_data.get('price', 0),
         'vwap': stock_data.get('vwap', 0),
         'rsi_14': rsi,
