@@ -880,6 +880,89 @@ def render_signal_badge(signal: str) -> str:
     return f'<span class="signal-badge" style="background:#30363d;color:#8b949e;">{signal}</span>'
 
 
+def _render_conviction_panel(ticker: str) -> None:
+    """Render the cross-layer CONVICTION panel for a ticker.
+
+    Shows the agreement between institutional flow (Konkorde), smart-money
+    options positioning and political insiders (Congress), plus the GEX/squeeze
+    "fuel" gauge and a rule-based trade thesis. This is the app's differential
+    signal — no other layer cross-references these the way this does.
+    """
+    from webapp.data.providers import get_conviction_signals
+    conv = get_conviction_signals(ticker)
+    if not conv or conv.get('agreement') == 'no_data':
+        return
+
+    score = conv['conviction_score']
+    agreement = conv['agreement']
+    fuel = conv.get('fuel', 50)
+    coverage = conv.get('coverage', 0)
+
+    # Headline color + label by agreement
+    agree_meta = {
+        'aligned_bullish': ('#3fb950', 'CONVICCIÓN ALCISTA', '▲'),
+        'aligned_bearish': ('#f85149', 'CONVICCIÓN BAJISTA', '▼'),
+        'conflict':        ('#d29922', 'SEÑALES EN CONFLICTO', '⚠'),
+        'mixed':           ('#6e7681', 'SIN CONVICCIÓN CLARA', '–'),
+    }
+    color, label, arrow = agree_meta.get(agreement, ('#6e7681', 'SIN DATOS', '–'))
+
+    # Per-layer chips
+    def _dir_chip(layer):
+        d = layer['direction']
+        if not layer['available']:
+            c, txt = '#30363d', 'sin datos'
+        elif d > 0:
+            c, txt = '#3fb950', 'alcista'
+        elif d < 0:
+            c, txt = '#f85149', 'bajista'
+        else:
+            c, txt = '#6e7681', 'neutral'
+        op = '1' if layer['available'] else '0.45'
+        return (
+            f'<div style="flex:1; min-width:140px; background:#0d1117; border:1px solid #21262d;'
+            f'border-radius:8px; padding:10px 12px; opacity:{op};">'
+            f'<div style="font-size:0.7rem; color:#8b949e; text-transform:uppercase; letter-spacing:0.3px;">{layer["name"]}</div>'
+            f'<div style="font-size:0.95rem; font-weight:700; color:{c}; margin:2px 0;">{txt}</div>'
+            f'<div style="font-size:0.7rem; color:#6e7681; line-height:1.3;">{_esc(str(layer["detail"]))[:60]}</div>'
+            f'</div>'
+        )
+
+    chips = ''.join(_dir_chip(l) for l in conv['layers'])
+
+    # Fuel bar (0-100)
+    fuel_color = '#bc8cff' if fuel >= 65 else ('#58a6ff' if fuel >= 45 else '#6e7681')
+    gex = conv.get('gex_regime', 'neutral')
+    cov_note = '' if coverage >= 3 else f' · <span style="color:#d29922;">cobertura {coverage}/3</span>'
+
+    st.markdown(f"""
+    <div style="background:#161b22; border:1px solid {color}55; border-left:4px solid {color};
+                border-radius:12px; padding:16px 18px; margin:14px 0;">
+        <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:12px;">
+            <div style="font-size:1.8rem;">🎯</div>
+            <div>
+                <div style="font-size:0.72rem; color:#8b949e; letter-spacing:0.5px;">CONVICCIÓN MULTI-CAPA{cov_note}</div>
+                <div style="font-size:1.15rem; font-weight:800; color:{color};">{arrow} {label}</div>
+            </div>
+            <div style="margin-left:auto; text-align:right;">
+                <div style="font-size:2rem; font-weight:800; color:{color}; line-height:1;">{score:.0f}</div>
+                <div style="font-size:0.68rem; color:#6e7681;">score 0-100</div>
+            </div>
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">{chips}</div>
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+            <div style="font-size:0.7rem; color:#8b949e; min-width:120px;">⛽ Combustible (GEX {gex})</div>
+            <div style="flex:1; height:8px; background:#0d1117; border-radius:4px; overflow:hidden;">
+                <div style="width:{fuel:.0f}%; height:100%; background:{fuel_color};"></div>
+            </div>
+            <div style="font-size:0.72rem; color:{fuel_color}; font-weight:700; min-width:30px;">{fuel:.0f}</div>
+        </div>
+        <div style="background:#0d1117; border-radius:8px; padding:10px 12px; font-size:0.82rem;
+                    color:#c9d1d9; line-height:1.5;">💡 {_esc(conv.get('thesis',''))}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
 def get_regime_color(score: int) -> str:
     if score >= 80: return '#f85149'
     if score >= 60: return '#f0883e'
@@ -903,8 +986,16 @@ def render_fund_card(title: str, rows: list) -> str:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def get_market_overview_data():
-    """Get market overview data for dashboard with sparkline history."""
+    """Get market overview data for dashboard with sparkline history.
+
+    Uses a single batch ``yf.download`` for all instruments (instead of 9
+    sequential ``Ticker.history`` calls) so a burst of requests can't get
+    rate-limited into silently dropping tickers like IWM. Falls back to a
+    per-ticker fetch for anything the batch misses so partial batch results
+    still get filled in.
+    """
     import yfinance as yf
     tickers_info = {
         'SPY': {'name': 'S&P 500', 'emoji': '🇺🇸'},
@@ -918,21 +1009,53 @@ def get_market_overview_data():
         'ETH-USD': {'name': 'Ethereum', 'emoji': 'Ξ'},
     }
     results = {}
-    for ticker, info in tickers_info.items():
+
+    def _emit(ticker, hist):
+        closes = hist['Close'].dropna() if 'Close' in hist.columns else None
+        if closes is None or len(closes) < 1:
+            return
+        current = float(closes.iloc[-1])
+        prev = float(closes.iloc[-2]) if len(closes) > 1 else current
+        change = ((current / prev) - 1) * 100 if prev else 0.0
+        info = tickers_info[ticker]
+        results[ticker] = {
+            'name': info['name'], 'emoji': info['emoji'],
+            'price': current, 'change': change,
+            'sparkline': closes.tolist()[-20:],
+        }
+
+    # 1) Batch download — one request, threaded, resilient to single 429s
+    tickers = list(tickers_info.keys())
+    try:
+        data = yf.download(tickers, period='1mo', group_by='ticker',
+                           auto_adjust=True, threads=True, progress=False)
+        if data is not None and not data.empty:
+            for ticker in tickers:
+                try:
+                    if data.columns.nlevels > 1:
+                        if ticker not in data.columns.get_level_values(0):
+                            continue
+                        hist = data[ticker].dropna(how='all')
+                    else:
+                        hist = data
+                    if not hist.empty:
+                        _emit(ticker, hist)
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    # 2) Per-ticker fallback for anything the batch missed
+    for ticker in tickers:
+        if ticker in results:
+            continue
         try:
-            ticker_obj = yf.Ticker(ticker)
-            hist = ticker_obj.history(period='1mo')
+            hist = yf.Ticker(ticker).history(period='1mo', auto_adjust=True)
             if not hist.empty:
-                current = hist['Close'].iloc[-1]
-                prev = hist['Close'].iloc[-2] if len(hist) > 1 else current
-                change = ((current / prev) - 1) * 100
-                results[ticker] = {
-                    'name': info['name'], 'emoji': info['emoji'],
-                    'price': current, 'change': change,
-                    'sparkline': hist['Close'].tolist()[-20:],
-                }
+                _emit(ticker, hist)
         except Exception:
             pass
+
     return results
 
 
@@ -1836,8 +1959,11 @@ def _show_risk_command_center(risk_data, module_scores, crash_probs, score, regi
     col_gauge, col_alerts_r, col_probs = st.columns([1, 1, 1])
 
     with col_gauge:
-        fig = go.Figure(go.Indicator(
-            mode="gauge+number",
+        # Delta vs prior trading day (None on first run, before history exists)
+        _prev_score = risk_data.get('prev_score')
+        _indicator_mode = "gauge+number+delta" if _prev_score is not None else "gauge+number"
+        _indicator_kwargs = dict(
+            mode=_indicator_mode,
             value=score,
             title={'text': f"RISK EXPOSURE<br><span style='font-size:0.75em;color:{regime_color}'>{regime_level}</span>", 'font': {'size': 12}},
             number={'font': {'size': 28}},
@@ -1854,10 +1980,30 @@ def _show_risk_command_center(risk_data, module_scores, crash_probs, score, regi
                 ],
                 'threshold': {'line': {'color': '#e6edf3', 'width': 3}, 'thickness': 0.8, 'value': score},
             },
-        ))
+        )
+        if _prev_score is not None:
+            # Risk-up = bad, so inverted color semantics: red on increase
+            _indicator_kwargs['delta'] = {
+                'reference': _prev_score,
+                'increasing': {'color': '#f85149'},
+                'decreasing': {'color': '#3fb950'},
+                'font': {'size': 14},
+            }
+        fig = go.Figure(go.Indicator(**_indicator_kwargs))
         fig.update_layout(height=200, margin=dict(l=15, r=15, t=55, b=5),
                           paper_bgcolor='rgba(0,0,0,0)', font={'color': '#e6edf3', 'size': 11})
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        if _prev_score is not None:
+            _delta_int = int(score) - int(_prev_score)
+            _arrow = '▲' if _delta_int > 0 else ('▼' if _delta_int < 0 else '◆')
+            _delta_color = '#f85149' if _delta_int > 0 else ('#3fb950' if _delta_int < 0 else '#8b949e')
+            st.markdown(
+                f'<div style="text-align:center;font-size:0.62rem;color:#6e7681;margin-top:-8px;">'
+                f'vs ayer: <span style="color:{_delta_color};font-weight:600;">{_arrow} {abs(_delta_int)}</span> '
+                f'(prev {int(_prev_score)})'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
     with col_alerts_r:
         st.markdown(f'<div style="font-size:0.62rem; text-transform:uppercase; letter-spacing:0.6px; color:#6e7681; font-weight:600; margin-bottom:4px;">{t("alerts_patterns")}</div>', unsafe_allow_html=True)
@@ -3040,47 +3186,58 @@ def show_stock_analysis():
     # As the user types, the Yahoo search endpoint returns matching tickers
     # which we surface in a selectbox. Hitting Enter or selecting a row
     # jumps to the analysis page for that ticker.
-    # Defensive import: tolerate deploy lag where providers.py might not yet
-    # have search_tickers (e.g. mid-rollout). UI degrades to no-autocomplete.
+    # st.text_input does NOT rerun per keystroke (only on Enter/blur), so true
+    # "as you type" autocomplete is impossible with it — that's why the old
+    # selectbox approach never surfaced live suggestions. streamlit-searchbox
+    # fires search_tickers() on EVERY keystroke and renders a live dropdown.
+    # We degrade to a plain text_input if the component isn't deployed yet.
+    import re as _re
+    from webapp.data.providers import search_tickers
+
+    def _norm_ticker(val):
+        return _re.sub(r'[^A-Z0-9.\-/^]', '', str(val or '').strip().upper())
+
+    _use_searchbox = True
     try:
-        from webapp.data.providers import search_tickers
-    except ImportError:
-        search_tickers = None
+        from streamlit_searchbox import st_searchbox
+    except Exception:
+        _use_searchbox = False
+
     col1, col2 = st.columns([3, 1])
     with col1:
-        _raw = st.text_input("Ticker", default_ticker, key="analysis_ticker_input",
-                              help=t('error.invalid_ticker_input'),
-                              label_visibility='visible')
-        import re as _re
-        ticker = _re.sub(r'[^A-Z0-9.\-/^]', '', (_raw or '').strip().upper())
+        if _use_searchbox:
+            def _ticker_search(q):
+                # Called live on each keystroke. Returns (label, value) tuples;
+                # value is the bare symbol we jump to.
+                try:
+                    return [(f"{s['symbol']} — {s['name'][:40]}", s['symbol'])
+                            for s in search_tickers(q, limit=8)]
+                except Exception:
+                    return []
 
-        # Live suggestions when query is 1-5 chars and DOESN'T exactly match
-        # a known stock data result. Only call search when input differs from
-        # the last selected ticker so we don't hit Yahoo on every rerun.
-        if (_raw and len(_raw) >= 1 and search_tickers is not None
-                and _raw.upper() != st.session_state.get('selected_ticker', '')):
-            try:
-                suggestions = search_tickers(_raw, limit=6)
-                if suggestions and not any(s['symbol'].upper() == ticker for s in suggestions[:1]):
-                    # Display as compact suggestion chips
-                    chips = ' · '.join(
-                        f'**{s["symbol"]}** {s["name"][:30]}'
-                        for s in suggestions[:5]
-                    )
-                    st.caption(f'💡 {chips}')
-                    # Quick-pick: small selectbox with the suggestions
-                    _pick_labels = [f"{s['symbol']} — {s['name'][:40]}" for s in suggestions[:6]]
-                    _pick_labels.insert(0, '— select to jump —')
-                    _picked = st.selectbox(
-                        ' ', _pick_labels, index=0, key=f"ticker_pick_{_raw}",
-                        label_visibility='collapsed',
-                    )
-                    if _picked != '— select to jump —':
-                        _sym = _picked.split(' — ')[0]
-                        st.session_state.selected_ticker = _sym
-                        st.rerun()
-            except Exception:
-                pass
+            _picked = st_searchbox(
+                _ticker_search,
+                key="ticker_searchbox",
+                placeholder=f"🔍 Buscar ticker…  (actual: {default_ticker})",
+                default_use_searchterm=False,
+            )
+            ticker = _norm_ticker(_picked) or _norm_ticker(default_ticker)
+            if _picked and ticker and ticker != st.session_state.get('selected_ticker'):
+                st.session_state.selected_ticker = ticker
+                st.rerun()
+        else:
+            # Fallback: plain input (suggestions only appear after Enter/blur).
+            _raw = st.text_input("Ticker", default_ticker, key="analysis_ticker_input",
+                                 help=t('error.invalid_ticker_input'))
+            ticker = _norm_ticker(_raw)
+            if (_raw and 1 <= len(_raw) <= 5):
+                try:
+                    sugg = search_tickers(_raw, limit=6)
+                    if sugg and not (sugg[0]['symbol'].upper() == ticker and len(_raw) >= 2):
+                        st.caption('💡 ' + ' · '.join(
+                            f'**{s["symbol"]}** {s["name"][:30]}' for s in sugg[:5]))
+                except Exception:
+                    pass
 
         if not ticker:
             st.info(t('error.invalid_ticker_input'))
@@ -3236,6 +3393,18 @@ def show_stock_analysis():
             </div>
         </div>
         """, unsafe_allow_html=True)
+
+    # =========================================================================
+    # 🎯 CONVICTION — cross-layer agreement (Konkorde × Options × Congress)
+    # =========================================================================
+    # The differential signal: standard tools show each layer alone. The edge
+    # is in their AGREEMENT. When institutional flow, smart-money options and
+    # political insiders point the same way, conviction is high; when they
+    # conflict, it's a trap warning. GEX/squeeze = fuel (how far it can run).
+    try:
+        _render_conviction_panel(ticker)
+    except Exception:
+        pass
 
     # =========================================================================
     # DATA-COVERAGE / CONFIDENCE INDICATOR
@@ -3634,13 +3803,24 @@ def _show_technical_tab(ticker: str, data: dict):
         hist = data.get('history')
         if hist is not None and not hist.empty:
             import json as _json
-            from streamlit_lightweight_charts import renderLightweightCharts
 
             konkorde = calculate_konkorde(hist)
             supertrend = calculate_supertrend(hist)
             stoch_rsi = calculate_stoch_rsi(hist['Close'])
             adx_data = calculate_adx(hist)
             obv_series = calculate_obv(hist['Close'], hist['Volume'])
+
+            # lightweight-charts is an optional frontend component. On Streamlit
+            # Cloud it can be missing during deploy lag / install failures — in
+            # that case fall back to a Plotly candlestick so the tab still shows
+            # a chart instead of crashing the whole page with an ImportError.
+            try:
+                from streamlit_lightweight_charts import renderLightweightCharts
+                _lwc_ok = True
+            except Exception:
+                _lwc_ok = False
+
+        if hist is not None and not hist.empty and _lwc_ok:
 
             # Prepare dataframe for lightweight-charts
             _df = hist.copy()
@@ -3785,11 +3965,19 @@ def _show_technical_tab(ticker: str, data: dict):
                 "watermark": {"visible": True, "fontSize": 18, "horzAlign": "left", "vertAlign": "top",
                               "color": "rgba(88,166,255,0.4)", "text": "Konkorde 2.0"},
             }
+            # Transparent anchor lines at ±konkorde_y force the pane's auto-scale
+            # to honour the Y-range chosen with the slider (the lightweight-charts
+            # python wrapper can't set a fixed price-scale range directly).
+            _k_times = _k_df['time'].tolist()
+            _k_anchor_hi = [{"time": tt, "value": float(konkorde_y)} for tt in _k_times]
+            _k_anchor_lo = [{"time": tt, "value": float(-konkorde_y)} for tt in _k_times]
             _series_konkorde = [
                 {"type": "Histogram", "data": _k_verde_json, "options": {"priceScaleId": "konkorde", "title": "Retail"}},
                 {"type": "Histogram", "data": _k_azul_json, "options": {"priceScaleId": "konkorde", "title": "Institucional"}},
                 {"type": "Line", "data": _k_marron, "options": {"color": "#f0883e", "lineWidth": 2, "priceScaleId": "konkorde", "title": "Tendencia"}},
                 {"type": "Line", "data": _k_media, "options": {"color": "#ffffff", "lineWidth": 1, "lineStyle": 2, "priceScaleId": "konkorde", "title": "Media"}},
+                {"type": "Line", "data": _k_anchor_hi, "options": {"color": "rgba(0,0,0,0)", "priceScaleId": "konkorde", "lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": False}},
+                {"type": "Line", "data": _k_anchor_lo, "options": {"color": "rgba(0,0,0,0)", "priceScaleId": "konkorde", "lastValueVisible": False, "priceLineVisible": False, "crosshairMarkerVisible": False}},
             ]
 
             # Pane 3: Volume
@@ -3826,6 +4014,31 @@ def _show_technical_tab(ticker: str, data: dict):
                     st.warning(t('technical.konkorde_dist'))
                 else:
                     st.error(t('technical.konkorde_strong_bear'))
+
+        # Plotly fallback — only when the lightweight-charts component is
+        # unavailable. Keeps a usable price/volume chart instead of a blank tab.
+        if hist is not None and not hist.empty and not _lwc_ok:
+            _fb = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                                row_heights=[0.75, 0.25], vertical_spacing=0.03)
+            _fb.add_trace(go.Candlestick(
+                x=hist.index, open=hist['Open'], high=hist['High'],
+                low=hist['Low'], close=hist['Close'], name=ticker,
+                increasing_line_color='#3fb950', decreasing_line_color='#f85149',
+            ), row=1, col=1)
+            _sma20 = hist['Close'].rolling(20).mean()
+            _fb.add_trace(go.Scatter(x=hist.index, y=_sma20, name='SMA20',
+                                     line=dict(color='#d29922', width=1)), row=1, col=1)
+            _vol_colors = np.where(hist['Close'] >= hist['Open'],
+                                   'rgba(63,185,80,0.6)', 'rgba(248,81,73,0.6)')
+            _fb.add_trace(go.Bar(x=hist.index, y=hist['Volume'], name='Vol',
+                                 marker_color=_vol_colors), row=2, col=1)
+            _fb.update_layout(
+                template='plotly_dark', paper_bgcolor='#0d1117', plot_bgcolor='#0d1117',
+                height=520, margin=dict(l=0, r=0, t=10, b=0), showlegend=False,
+                xaxis_rangeslider_visible=False,
+            )
+            st.plotly_chart(_fb, use_container_width=True, config={'displayModeBar': False},
+                            key=f"fb_chart_{ticker}_{selected_tf}")
 
     with col_indicators:
         st.markdown(f"### {t('technical.indicators_title')}")

@@ -3,6 +3,7 @@
 
 # Web Framework
 streamlit>=1.30.0
+streamlit-searchbox>=0.1.20   # live as-you-type ticker autocomplete
 
 # Data & Finance
 yfinance>=0.2.36

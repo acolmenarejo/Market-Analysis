@@ -382,20 +382,31 @@ def search_tickers(query: str, limit: int = 8) -> List[Dict[str, str]]:
     except Exception:
         pass
 
-    # 2) Local fallback — substring match on the TICKER_UNIVERSE
-    if not out:
-        try:
-            from webapp.config import TICKER_UNIVERSE
-            q_upper = query.upper()
-            for t in TICKER_UNIVERSE:
-                if q_upper in t.upper():
-                    out.append({'symbol': t, 'name': t, 'exchange': '', 'type': 'EQUITY'})
-                    if len(out) >= limit:
-                        break
-        except Exception:
-            pass
+    # 2) Local universe matches — ALWAYS merged in (not only when Yahoo
+    # returns nothing) so a known ticker the user is typing always surfaces
+    # even if Yahoo is throttled/slow. Prefix matches rank ahead of plain
+    # substring matches. Deduped against whatever Yahoo already returned.
+    try:
+        from webapp.config import TICKER_UNIVERSE
+        q_upper = query.upper()
+        have = {d['symbol'].upper() for d in out}
+        prefix, substr = [], []
+        for t in TICKER_UNIVERSE:
+            tu = t.upper()
+            if tu in have:
+                continue
+            if tu.startswith(q_upper):
+                prefix.append(t)
+            elif q_upper in tu:
+                substr.append(t)
+        for t in prefix + substr:
+            out.append({'symbol': t, 'name': t, 'exchange': '', 'type': 'EQUITY'})
+            if len(out) >= limit:
+                break
+    except Exception:
+        pass
 
-    return out
+    return out[:limit]
 
 
 # =============================================================================
@@ -4421,6 +4432,130 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                 # Cross-sectional Fama factors
                 _cs = cross_sectional.get(ticker, {})
 
+                # === HORIZON-SPECIFIC SIGNALS (computed from batch data) ===
+                # Previously all defaulted to 50 → CP/MP/LP scores collapsed
+                # to identical values across many tickers because the dominant
+                # signaling factors were macro signals shared between horizons.
+                # These cheap derivations from info+hist restore differentiation.
+
+                # iv_percentile_realized: low realized vol = cheap optionality
+                # = bullish CP signal. Score inverts vol percentile (0=high vol→
+                # low score, 100=low vol→high score), but the consumer in
+                # multi_horizon already inverts (100-x), so we return raw pct.
+                try:
+                    _rv_returns = close.pct_change().dropna()
+                    if len(_rv_returns) >= 60:
+                        _rv_20 = float(_rv_returns.tail(20).std() * (252 ** 0.5) * 100)
+                        _rv_252 = _rv_returns.tail(252) if len(_rv_returns) >= 252 else _rv_returns
+                        _rv_rolling = _rv_252.rolling(20).std().dropna() * (252 ** 0.5) * 100
+                        if len(_rv_rolling) > 10:
+                            _rv_pctile = float((_rv_rolling < _rv_20).sum() / len(_rv_rolling) * 100)
+                            _iv_percentile_realized = max(5.0, min(95.0, _rv_pctile))
+                        else:
+                            _iv_percentile_realized = 50.0
+                    else:
+                        _iv_percentile_realized = 50.0
+                except Exception:
+                    _iv_percentile_realized = 50.0
+
+                # squeeze_potential_score: high SI + high relative volume =
+                # squeeze setup. Caps at 90 (no perfect 100 without options).
+                try:
+                    _si_pct = float(info.get('shortPercentOfFloat', 0) or 0) * 100
+                    _vol_kick = max(0.0, min(2.5, volume_ratio - 1.0))
+                    _sq_score = 50.0 + (_si_pct - 5.0) * 1.5 + _vol_kick * 8.0
+                    _squeeze_potential_score = max(15.0, min(90.0, _sq_score))
+                except Exception:
+                    _squeeze_potential_score = 50.0
+
+                # catalyst_proximity_score: days until earnings. <14 days +
+                # low IV = strong setup; far away = neutral.
+                try:
+                    _ets = info.get('earningsTimestamp') or info.get('earningsTimestampStart')
+                    if _ets:
+                        _days_to_earnings = (float(_ets) - datetime.now().timestamp()) / 86400.0
+                        if 0 < _days_to_earnings <= 7:
+                            _catalyst_proximity_score = 80.0
+                        elif 7 < _days_to_earnings <= 21:
+                            _catalyst_proximity_score = 65.0
+                        elif 21 < _days_to_earnings <= 45:
+                            _catalyst_proximity_score = 55.0
+                        else:
+                            _catalyst_proximity_score = 45.0
+                    else:
+                        _catalyst_proximity_score = 50.0
+                except Exception:
+                    _catalyst_proximity_score = 50.0
+
+                # analyst_revisions_score: recommendationMean (1=StrongBuy →
+                # 5=StrongSell) blended with target upside vs price. Centers 50
+                # at recommendationMean=3 (Hold) with no upside.
+                try:
+                    _rec = info.get('recommendationMean')
+                    _tgt = info.get('targetMeanPrice')
+                    _rec_f = float(_rec) if _rec is not None else None
+                    _tgt_f = float(_tgt) if _tgt is not None else None
+                    _ana = 50.0
+                    if _rec_f and not pd.isna(_rec_f) and 1 <= _rec_f <= 5:
+                        _ana += (3.0 - _rec_f) * 15.0
+                    if _tgt_f and not pd.isna(_tgt_f) and price_val > 0:
+                        _upside = (_tgt_f / price_val - 1.0) * 100
+                        _ana += max(-20.0, min(20.0, _upside * 0.6))
+                    _analyst_revisions_score = max(10.0, min(90.0, _ana))
+                except Exception:
+                    _analyst_revisions_score = 50.0
+
+                # earnings_streak_score: from quarterly earnings + revenue
+                # growth as a proxy for streak momentum. Lacking surprise
+                # history we use the YoY growth as best signal.
+                try:
+                    _eqg = info.get('earningsQuarterlyGrowth')
+                    _rvg = info.get('revenueGrowth')
+                    _eqg_f = float(_eqg) if _eqg is not None else None
+                    _rvg_f = float(_rvg) if _rvg is not None else None
+                    _es = 50.0
+                    if _eqg_f is not None and not pd.isna(_eqg_f):
+                        _es += max(-30.0, min(30.0, _eqg_f * 100.0 * 0.8))
+                    if _rvg_f is not None and not pd.isna(_rvg_f):
+                        _es += max(-15.0, min(15.0, _rvg_f * 100.0 * 0.6))
+                    _earnings_streak_score = max(10.0, min(90.0, _es))
+                except Exception:
+                    _earnings_streak_score = 50.0
+
+                # roic_trend_score: without multi-year history we proxy from
+                # the current ROIC level — high ROIC firms are far more likely
+                # to be on an improving trajectory than low-ROIC firms.
+                try:
+                    if roic >= 20:
+                        _roic_trend_score = 85.0
+                    elif roic >= 12:
+                        _roic_trend_score = 70.0
+                    elif roic >= 8:
+                        _roic_trend_score = 55.0
+                    elif roic >= 3:
+                        _roic_trend_score = 40.0
+                    else:
+                        _roic_trend_score = 20.0
+                except Exception:
+                    _roic_trend_score = 50.0
+
+                # debt_maturity_risk_score: low debt/EBITDA = low refinancing
+                # risk = HIGH score (multi_horizon treats high=bullish). Score
+                # is the *inverse* of refi risk.
+                try:
+                    if debt_ebitda <= 1:
+                        _debt_maturity_risk_score = 85.0
+                    elif debt_ebitda <= 2.5:
+                        _debt_maturity_risk_score = 70.0
+                    elif debt_ebitda <= 4:
+                        _debt_maturity_risk_score = 50.0
+                    elif debt_ebitda <= 6:
+                        _debt_maturity_risk_score = 30.0
+                    else:
+                        _debt_maturity_risk_score = 15.0
+                except Exception:
+                    _debt_maturity_risk_score = 50.0
+
                 scoring_data = {
                     'ticker': ticker,
                     'price': price_val,
@@ -4490,19 +4625,20 @@ def get_multi_horizon_scores(tickers: List[str]) -> pd.DataFrame:
                     'market_breadth_score': _sector_rot.get('market_breadth_score', 50),
                     'credit_risk_score': _credit_proxy.get('credit_risk_score', 50),
                     'credit_trajectory': _credit_proxy.get('credit_trajectory', 'stable'),
-                    # ===== PER-TICKER signals (defaults in batch, real in
-                    # individual ticker via enrich_scoring_data) =====
-                    'iv_percentile_realized': 50,
-                    'skew_score': 50,
-                    'pc_ratio_score': 50,
-                    'gex_regime_score': 50,
-                    'squeeze_potential_score': 50,
-                    'catalyst_proximity_score': 50,
-                    'analyst_revisions_score': 50,
-                    'insider_cluster_score': 50,
-                    'roic_trend_score': 50,
-                    'earnings_streak_score': 50,
-                    'debt_maturity_risk_score': 50,
+                    # ===== PER-TICKER horizon-specific signals =====
+                    # In batch: derived cheaply from info+hist (see block above).
+                    # In enriched single-ticker path: overridden with options
+                    # chain + insider history via enrich_scoring_data.
+                    'iv_percentile_realized': _iv_percentile_realized,
+                    'pc_ratio_score': 50,          # needs options chain
+                    'gex_regime_score': 50,        # needs options chain
+                    'squeeze_potential_score': _squeeze_potential_score,
+                    'catalyst_proximity_score': _catalyst_proximity_score,
+                    'analyst_revisions_score': _analyst_revisions_score,
+                    'insider_cluster_score': 50,   # needs Form 4 history
+                    'roic_trend_score': _roic_trend_score,
+                    'earnings_streak_score': _earnings_streak_score,
+                    'debt_maturity_risk_score': _debt_maturity_risk_score,
                 }
 
                 result = scorer.calculate_all_horizons(scoring_data)
@@ -5281,11 +5417,73 @@ def warm_score_cache_background(tickers: List[str], chunk_size: int = 50) -> Non
 # RISK EXPOSURE ENGINE PROVIDERS
 # =============================================================================
 
+RISK_SCORE_HISTORY_FILE = ROOT_DIR / 'data' / 'risk_score_history.parquet'
+
+
+def _load_risk_score_history() -> pd.DataFrame:
+    """Disk-cached history of daily risk exposure score."""
+    try:
+        if RISK_SCORE_HISTORY_FILE.exists():
+            return pd.read_parquet(RISK_SCORE_HISTORY_FILE)
+    except Exception as e:
+        print(f"risk history read error: {e}")
+    return pd.DataFrame(columns=['date', 'final_score', 'regime_level',
+                                  'liquidity_stress', 'market_technicals',
+                                  'valuation_excess', 'volatility_regime',
+                                  'positioning_crowding', 'macro_deterioration'])
+
+
+def _persist_daily_risk_score(results: Dict[str, Any]) -> Optional[int]:
+    """Append today's risk score row if not already saved. Returns the
+    previous trading day's score (or None if no history)."""
+    try:
+        hist = _load_risk_score_history()
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        mods = results.get('module_scores', {}) or {}
+        def _ms(k):
+            v = mods.get(k, 0)
+            return v.get('score', 0) if isinstance(v, dict) else v
+
+        # Previous score (most recent row that is not today's)
+        prev_score = None
+        if not hist.empty:
+            prior_rows = hist[hist['date'] != today].sort_values('date')
+            if not prior_rows.empty:
+                prev_score = int(prior_rows.iloc[-1]['final_score'])
+
+        # Skip persistence if today's row already exists
+        if not hist.empty and (hist['date'] == today).any():
+            return prev_score
+
+        new_row = {
+            'date': today,
+            'final_score': int(results.get('final_score', 50)),
+            'regime_level': (results.get('regime') or {}).get('level', 'CAUTELA'),
+            'liquidity_stress': float(_ms('liquidity_stress')),
+            'market_technicals': float(_ms('market_technicals')),
+            'valuation_excess': float(_ms('valuation_excess')),
+            'volatility_regime': float(_ms('volatility_regime')),
+            'positioning_crowding': float(_ms('positioning_crowding')),
+            'macro_deterioration': float(_ms('macro_deterioration')),
+        }
+        combined = pd.concat([hist, pd.DataFrame([new_row])], ignore_index=True)
+        RISK_SCORE_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        combined.to_parquet(RISK_SCORE_HISTORY_FILE, index=False)
+        return prev_score
+    except Exception as e:
+        print(f"risk history persist error: {e}")
+        return None
+
+
 @st.cache_data(ttl=600, show_spinner=False)  # 10 minutos
 def get_risk_exposure_score(manual_inputs: Optional[Dict] = None) -> Dict[str, Any]:
     """
     Run the Risk Exposure Engine and return full results.
     Cached for 10 minutes to avoid re-running on every page load.
+
+    Also persists today's score to a parquet history and surfaces the prior
+    trading day's score under `prev_score` so the UI can render a Δ delta.
     """
     try:
         import importlib.util
@@ -5310,6 +5508,15 @@ def get_risk_exposure_score(manual_inputs: Optional[Dict] = None) -> Dict[str, A
             manual_inputs = _get_default_manual_inputs()
 
         results = engine.run(manual_inputs=manual_inputs)
+
+        # Persist + retrieve previous day's score for delta rendering
+        prev_score = _persist_daily_risk_score(results)
+        results['prev_score'] = prev_score
+        if prev_score is not None:
+            results['score_delta'] = int(results.get('final_score', 50)) - prev_score
+        else:
+            results['score_delta'] = None
+
         return results
 
     except Exception as e:
@@ -5392,7 +5599,258 @@ def _get_fallback_risk_data() -> Dict[str, Any]:
     }
 
 
+def _score_konkorde_for_ticker(hist) -> Dict[str, Any]:
+    """Map the Konkorde indicator to a 0-100 institutional-flow score.
+
+    Konkorde separates "manos fuertes" (institutional, the `azul`/blue line)
+    from total money flow (`verde`/green). Positive blue = institutions
+    accumulating. Mirrors the batch-path logic in get_market_data() so the
+    detail page and screener agree. Returns neutral 50 if data is missing.
+    """
+    out = {'score': 50.0, 'signal': 'neutral', 'azul': 0.0, 'verde': 0.0,
+           'divergence_score': 50.0, 'bullish_divergence': False, 'available': False}
+    try:
+        if hist is None or len(hist) < 30:
+            return out
+        konkorde = calculate_konkorde(hist)
+        if konkorde['azul'].empty:
+            return out
+        la = float(konkorde['azul'].iloc[-1])
+        lv = float(konkorde['verde'].iloc[-1])
+        out['azul'], out['verde'], out['available'] = la, lv, True
+        if la > 0 and lv > 0:
+            out['signal'] = 'strong_bullish'
+            out['score'] = 80 + min(la, 20)
+        elif la > 0:
+            out['signal'] = 'accumulation'
+            out['score'] = 70 + min(la, 15)
+        elif la < 0 and lv < 0:
+            out['signal'] = 'strong_bearish'
+            out['score'] = 20 - min(abs(la), 15)
+        elif la < 0:
+            out['signal'] = 'distribution'
+            out['score'] = 30 - min(abs(la), 15)
+        out['score'] = max(5, min(95, out['score']))
+        if len(hist) >= 20:
+            div = detect_konkorde_divergence(hist, konkorde)
+            out['divergence_score'] = div.get('divergence_score', 50)
+            out['bullish_divergence'] = div.get('bullish_divergence', False)
+    except Exception:
+        pass
+    return out
+
+
+def _score_congress_for_ticker(ticker: str, days: int = 180) -> Dict[str, Any]:
+    """Aggregate congressional trades for a ticker into a 0-100 score.
+
+    More distinct buyers than sellers = bullish insider/political signal.
+    The score scales with the net buyer count and the number of distinct
+    politicians (breadth). Returns neutral 50 with available=False if the
+    congress feed is empty (so callers can exclude it from conviction).
+    """
+    out = {'score': 50.0, 'signal': 'neutral', 'buys': 0, 'sells': 0,
+           'politicians': 0, 'detail': '', 'available': False}
+    try:
+        trades = get_congress_trades_for_ticker(ticker, days=days)
+        if trades.empty or 'transaction_type' not in trades.columns:
+            return out
+        buys = int((trades['transaction_type'] == 'buy').sum())
+        sells = int((trades['transaction_type'] == 'sell').sum())
+        pols = int(trades['politician'].nunique()) if 'politician' in trades.columns else 0
+        out.update({'buys': buys, 'sells': sells, 'politicians': pols,
+                    'available': (buys + sells) > 0})
+        net = buys - sells
+        # Score: ±8 per net trade, ±3 per distinct politician of breadth, capped.
+        out['score'] = max(5, min(95, 50 + net * 8 + (3 if net > 0 else (-3 if net < 0 else 0)) * min(pols, 5)))
+        if net > 0:
+            out['signal'] = 'bullish'
+            out['detail'] = f'{buys} compras vs {sells} ventas · {pols} congresistas (6M)'
+        elif net < 0:
+            out['signal'] = 'bearish'
+            out['detail'] = f'{sells} ventas vs {buys} compras · {pols} congresistas (6M)'
+        elif buys + sells > 0:
+            out['detail'] = f'{buys} compras, {sells} ventas · {pols} congresistas (6M)'
+    except Exception:
+        pass
+    return out
+
+
+def _dir_from_score(score: float, neutral_band: float = 8.0) -> int:
+    """+1 bullish / -1 bearish / 0 neutral from a 0-100 score (50=neutral)."""
+    if score >= 50 + neutral_band:
+        return 1
+    if score <= 50 - neutral_band:
+        return -1
+    return 0
+
+
 @st.cache_data(ttl=600, show_spinner=False)
+def get_conviction_signals(ticker: str) -> Dict[str, Any]:
+    """Cross-layer CONVICTION score — the differential signal.
+
+    Standard tools show each layer (flow, options, insiders) in isolation.
+    The edge is in their AGREEMENT: when institutional flow (Konkorde),
+    smart-money options positioning (skew/flow), and political insiders
+    (Congress) all point the same way, conviction is high. When they
+    conflict, it's a trap warning. GEX and squeeze potential act as "fuel":
+    they don't pick a direction, they amplify how far an aligned move can run.
+
+    Model:
+      - Directional voters (each votes -1/0/+1 with a 0-1 strength):
+          Konkorde (institutional flow)   weight 0.42
+          Options skew/flow (smart money) weight 0.33
+          Congress (political insiders)   weight 0.25
+      - direction_score (0-100): weighted vote, 50 = neutral.
+      - agreement: how the non-neutral voters line up
+          aligned_bullish / aligned_bearish / conflict / mixed
+      - fuel (0-100): GEX regime + squeeze potential — amplifies an aligned
+        setup; high fuel + conflict = elevated whipsaw risk.
+      - conviction_score: direction pushed away from 50 by agreement & fuel.
+
+    Returns neutral/low-coverage gracefully when feeds are unavailable.
+    """
+    stock_data = get_stock_data(ticker)
+    if isinstance(stock_data, dict) and 'error' in stock_data:
+        return {'error': stock_data['error'], 'conviction_score': 50.0,
+                'agreement': 'no_data', 'layers': [], 'coverage': 0, 'thesis': ''}
+    hist = stock_data.get('history') if isinstance(stock_data, dict) else None
+
+    try:
+        opt_sig = get_options_signals(ticker)
+    except Exception:
+        opt_sig = {}
+
+    konk = _score_konkorde_for_ticker(hist)
+    cong = _score_congress_for_ticker(ticker)
+
+    # Options "smart money" direction: blend skew (low put-fear = bullish
+    # contrarian) and P/C OI. Both already 0-100 where >50 leans bullish.
+    skew_s = opt_sig.get('skew_score', 50)
+    pc_s = opt_sig.get('pc_ratio_score', 50)
+    flow_score = round((skew_s + pc_s) / 2, 1)
+    flow_available = abs(skew_s - 50) > 0.5 or abs(pc_s - 50) > 0.5
+
+    layers = [
+        {'name': 'Konkorde', 'label': 'Flujo institucional', 'weight': 0.42,
+         'score': konk['score'], 'direction': _dir_from_score(konk['score']),
+         'available': konk['available'],
+         'detail': {'strong_bullish': 'Manos fuertes acumulando con fuerza',
+                    'accumulation': 'Manos fuertes acumulando',
+                    'distribution': 'Manos fuertes distribuyendo',
+                    'strong_bearish': 'Manos fuertes vendiendo con fuerza',
+                    'neutral': 'Sin sesgo institucional claro'}.get(konk['signal'], '')},
+        {'name': 'Options Flow', 'label': 'Smart money (opciones)', 'weight': 0.33,
+         'score': flow_score, 'direction': _dir_from_score(flow_score),
+         'available': flow_available,
+         'detail': ('Skew/P-C inclinado alcista' if flow_score > 50 else
+                    ('Skew/P-C inclinado bajista' if flow_score < 50 else
+                     'Posicionamiento de opciones neutral'))},
+        {'name': 'Congress', 'label': 'Insiders políticos', 'weight': 0.25,
+         'score': cong['score'], 'direction': _dir_from_score(cong['score']),
+         'available': cong['available'], 'detail': cong['detail'] or 'Sin operaciones recientes'},
+    ]
+
+    active = [l for l in layers if l['available'] and l['direction'] != 0]
+    coverage = sum(1 for l in layers if l['available'])
+    n_bull = sum(1 for l in active if l['direction'] == 1)
+    n_bear = sum(1 for l in active if l['direction'] == -1)
+
+    # Weighted directional score over AVAILABLE layers (renormalized).
+    avail = [l for l in layers if l['available']]
+    wsum = sum(l['weight'] for l in avail) or 1.0
+    direction_score = round(sum(l['score'] * l['weight'] for l in avail) / wsum, 1) if avail else 50.0
+
+    # Agreement classification
+    if not active:
+        agreement = 'mixed'
+    elif n_bull > 0 and n_bear == 0:
+        agreement = 'aligned_bullish'
+    elif n_bear > 0 and n_bull == 0:
+        agreement = 'aligned_bearish'
+    else:
+        agreement = 'conflict'
+
+    # Fuel: GEX regime + squeeze potential (how far an aligned move can run)
+    gex_s = opt_sig.get('gex_regime_score', 50)
+    sq_s = opt_sig.get('squeeze_potential_score', 50)
+    fuel = round((max(gex_s, 100 - gex_s) * 0.4 + sq_s * 0.6), 1)  # distance-from-neutral GEX + squeeze
+
+    # Conviction score: amplify the direction by agreement strength and fuel.
+    n_active = len(active)
+    if agreement in ('aligned_bullish', 'aligned_bearish') and n_active >= 1:
+        # full agreement among 2-3 layers -> strong amplification
+        agree_mult = 1.0 + 0.25 * (n_active - 1)        # 1.0 .. 1.5
+        fuel_mult = 0.85 + 0.30 * (fuel / 100.0)        # 0.85 .. 1.15
+        conviction_score = round(50 + (direction_score - 50) * agree_mult * fuel_mult, 1)
+    elif agreement == 'conflict':
+        # voters disagree -> pull toward neutral (trap warning)
+        conviction_score = round(50 + (direction_score - 50) * 0.4, 1)
+    else:
+        conviction_score = direction_score
+    conviction_score = max(5, min(95, conviction_score))
+
+    thesis = _build_conviction_thesis(ticker, agreement, layers, fuel,
+                                      konk, cong, opt_sig, conviction_score)
+
+    return {
+        'ticker': ticker,
+        'conviction_score': conviction_score,
+        'direction_score': direction_score,
+        'agreement': agreement,
+        'fuel': fuel,
+        'coverage': coverage,
+        'n_bullish': n_bull, 'n_bearish': n_bear,
+        'layers': layers,
+        'konkorde': konk,
+        'congress': cong,
+        'gex_regime': opt_sig.get('gex_regime', 'neutral'),
+        'gex_score': gex_s,
+        'squeeze_score': sq_s,
+        'thesis': thesis,
+    }
+
+
+def _build_conviction_thesis(ticker, agreement, layers, fuel, konk, cong,
+                             opt_sig, conviction_score) -> str:
+    """Deterministic, rule-based trade thesis (no LLM needed).
+
+    Translates the cross-layer state into 2-3 plain-language sentences a
+    trader can act on — what the layers say, where the conflict/edge is,
+    and what the fuel/context implies.
+    """
+    parts = []
+    bull = [l for l in layers if l['available'] and l['direction'] == 1]
+    bear = [l for l in layers if l['available'] and l['direction'] == -1]
+    names_bull = ', '.join(l['name'] for l in bull)
+    names_bear = ', '.join(l['name'] for l in bear)
+
+    if agreement == 'aligned_bullish':
+        parts.append(f"Convicción alcista en {ticker}: {names_bull} apuntan en la misma dirección.")
+    elif agreement == 'aligned_bearish':
+        parts.append(f"Convicción bajista en {ticker}: {names_bear} coinciden a la baja.")
+    elif agreement == 'conflict':
+        parts.append(f"⚠️ Señales en conflicto en {ticker}: alcista en {names_bull or '—'} pero bajista en {names_bear or '—'}. Posible trampa — espera confirmación.")
+    else:
+        parts.append(f"Sin convicción clara en {ticker}: las capas de flujo no dan señal direccional suficiente.")
+
+    # Konkorde divergence callout (accumulation with flat/falling price)
+    if konk.get('bullish_divergence'):
+        parts.append("Divergencia alcista de Konkorde: el dinero fuerte acumula mientras el precio no acompaña — acumulación silenciosa.")
+
+    # Fuel / GEX context
+    gex = opt_sig.get('gex_regime', 'neutral')
+    if agreement in ('aligned_bullish', 'aligned_bearish'):
+        if fuel >= 65:
+            run = 'amplio recorrido' if gex == 'negative' else 'recorrido moderado'
+            parts.append(f"Combustible alto (GEX {gex}, squeeze elevado): si el movimiento arranca, hay {run}.")
+        elif fuel <= 40:
+            parts.append(f"Poco combustible (GEX {gex}): el movimiento puede quedarse sin gasolina, objetivos cortos.")
+    elif agreement == 'conflict' and fuel >= 65:
+        parts.append("Además el combustible es alto con señales enfrentadas: riesgo de latigazo (whipsaw) elevado.")
+
+    return ' '.join(parts)
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def get_enriched_scores(ticker: str) -> Dict[str, Any]:
     """Compute scores for a single ticker with FULL per-ticker enrichment.
@@ -5424,6 +5882,14 @@ def get_enriched_scores(ticker: str) -> Dict[str, Any]:
         fund_mom = get_fundamental_momentum_signals(ticker)
     except Exception:
         fund_mom = {}
+    # Congress (political insiders) — previously hardcoded to neutral 50 here,
+    # so the screener's flagship signal contributed NOTHING to the detail-page
+    # score. Wire it in for real so its weight actually applies. (Konkorde is
+    # wired below once stock_data/history is available.)
+    try:
+        cong_sig = _score_congress_for_ticker(ticker)
+    except Exception:
+        cong_sig = {}
 
     # 3) Rebuild scoring_data with enriched signals — we need to call the
     # scorer directly with the new inputs
@@ -5434,6 +5900,12 @@ def get_enriched_scores(ticker: str) -> Dict[str, Any]:
     # Pull fields needed to rebuild scoring_data
     info = stock_data.get('info', {})
     hist = stock_data.get('history')
+
+    # Konkorde (institutional flow) — wire real values now that history exists.
+    try:
+        konk_sig = _score_konkorde_for_ticker(hist)
+    except Exception:
+        konk_sig = {}
 
     # Recompute the small set of derived fields the scorer reads
     rsi = stock_data.get('rsi', 50)
@@ -5509,12 +5981,15 @@ def get_enriched_scores(ticker: str) -> Dict[str, Any]:
         'market_breadth_score': base_row.get('market_breadth_score', 50),
         'credit_risk_score': base_row.get('credit_risk_score', 50),
         'credit_trajectory': base_row.get('credit_trajectory', 'stable'),
-        # Misc
-        'congress_score': 50,
+        # Misc — Konkorde + Congress now wired to REAL per-ticker values
+        # (were hardcoded to 50, contributing nothing). These are the
+        # screener's flagship institutional-flow / political-insider signals.
+        'congress_score': cong_sig.get('score', 50),
         'news_sentiment': 0,
-        'konkorde_score': 50, 'konkorde_signal': 'neutral',
+        'konkorde_score': konk_sig.get('score', 50),
+        'konkorde_signal': konk_sig.get('signal', 'neutral'),
         'trendline_score': 50, 'rsi_crossover_score': 50,
-        'konkorde_divergence_score': 50,
+        'konkorde_divergence_score': konk_sig.get('divergence_score', 50),
         'vix_regime': 50, 'sector_rs': 50, 'short_interest': 0,
         'fcf_quality': 50, 'fcf_yield': 0,
         'fama_momentum': 50, 'fama_low_vol': 50,
@@ -5533,7 +6008,7 @@ def get_enriched_scores(ticker: str) -> Dict[str, Any]:
         'support_resistance': 50,
         'trend_strength': 50,
         'fcf_quality_mt': 50,
-        'congress_long_term': 50,
+        'congress_long_term': cong_sig.get('score', 50),
         'pe_percentile': 50, 'pb_percentile': 50,
         'ev_ebitda_percentile': 50, 'debt_ebitda': 0,
         'interest_coverage': 10, 'dividend_stability': 50,
@@ -5561,6 +6036,8 @@ def get_enriched_scores(ticker: str) -> Dict[str, Any]:
         'enrichment': {
             'options': opt_sig,
             'fundamental_momentum': fund_mom,
+            'konkorde': konk_sig,
+            'congress': cong_sig,
         },
     }
 
