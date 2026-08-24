@@ -99,10 +99,11 @@ SHORT_TERM_WEIGHTS = {
     'momentum_1m': 0.03,
     'relative_strength': 0.03,
 
-    # Volatility + drawdown RISK factor (high=safer). Backtest (175 tickers,
-    # 5y, Spearman IC of the risk-oriented factor): short +0.047, medium +0.020,
-    # long +0.030 — positive at every horizon. Weighted ~proportional to IC.
-    'volatility_drawdown': 0.05,
+    # Volatility + drawdown RISK factor (high=safer). Backtest (397 tickers,
+    # 10y, ~42.6k obs): IC short +0.004 (≈noise), medium +0.014, long +0.025 —
+    # the risk signal pays off more at LONGER horizons (structural). Weighted
+    # ∝ IC, so smallest here at the short horizon.
+    'volatility_drawdown': 0.02,
 
     # MACRO OVERLAY (12%) — reduced (shared signals contribute too)
     'macro_overlay': 0.04,
@@ -144,8 +145,8 @@ MEDIUM_TERM_WEIGHTS = {
     'fama_momentum': 0.05,
     'analyst_revisions': 0.02,
     'earnings_momentum': 0.01,
-    # Volatility + drawdown RISK factor (inverted; backtest IC +0.020 at MP)
-    'volatility_drawdown': 0.02,
+    # Volatility + drawdown RISK factor (10y backtest IC +0.014 at MP)
+    'volatility_drawdown': 0.03,
 
     # MACRO OVERLAY (15%) — slight reduction
     'macro_overlay': 0.05,
@@ -193,8 +194,9 @@ LONG_TERM_WEIGHTS = {
     'momentum_6m': 0.08,
     'fama_momentum': 0.08,
     'sector_rs': 0.04,
-    # Volatility + drawdown RISK factor (inverted; backtest IC +0.030 at LP)
-    'volatility_drawdown': 0.03,
+    # Volatility + drawdown RISK factor — strongest here (10y backtest IC
+    # +0.025 at LP; risk is a structural, longer-horizon signal).
+    'volatility_drawdown': 0.05,
 
     # Quality (28%) — strong train, neutral OOS — keep meaningful but smaller
     'roe': 0.08,
