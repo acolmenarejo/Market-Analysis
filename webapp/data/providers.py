@@ -6445,23 +6445,30 @@ def get_enriched_scores(ticker: str) -> Dict[str, Any]:
         return {'error': 'No base scores available'}
     base_row = base_df.iloc[0].to_dict()
 
-    # 2) Get heavy per-ticker signals (cached 15-60 min each)
-    try:
-        opt_sig = get_options_signals(ticker)
-    except Exception:
-        opt_sig = {}
-    try:
-        fund_mom = get_fundamental_momentum_signals(ticker)
-    except Exception:
-        fund_mom = {}
-    # Congress (political insiders) — previously hardcoded to neutral 50 here,
-    # so the screener's flagship signal contributed NOTHING to the detail-page
-    # score. Wire it in for real so its weight actually applies. (Konkorde is
-    # wired below once stock_data/history is available.)
-    try:
-        cong_sig = _score_congress_for_ticker(ticker)
-    except Exception:
-        cong_sig = {}
+    # 2) Get heavy per-ticker signals (cached 15-60 min each). These three are
+    # independent I/O-bound calls (options chain, fundamentals, congress feeds),
+    # so run them concurrently — the enriched score is gated by the SLOWEST of
+    # the three instead of their sum. (Congress hits GitHub, not Yahoo, so this
+    # doesn't pile concurrent load onto a single throttled host.)
+    from concurrent.futures import ThreadPoolExecutor
+    opt_sig, fund_mom, cong_sig = {}, {}, {}
+    with ThreadPoolExecutor(max_workers=3) as _ex:
+        _futs = {
+            'opt': _ex.submit(get_options_signals, ticker),
+            'fund': _ex.submit(get_fundamental_momentum_signals, ticker),
+            'cong': _ex.submit(_score_congress_for_ticker, ticker),
+        }
+        for _k, _f in _futs.items():
+            try:
+                _r = _f.result()
+            except Exception:
+                _r = {}
+            if _k == 'opt':
+                opt_sig = _r or {}
+            elif _k == 'fund':
+                fund_mom = _r or {}
+            else:
+                cong_sig = _r or {}
 
     # 3) Rebuild scoring_data with enriched signals — we need to call the
     # scorer directly with the new inputs
