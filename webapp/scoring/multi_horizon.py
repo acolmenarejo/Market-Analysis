@@ -99,10 +99,10 @@ SHORT_TERM_WEIGHTS = {
     'momentum_1m': 0.03,
     'relative_strength': 0.03,
 
-    # Volatility + drawdown reaction. Backtest (3y, Spearman IC): short-term
-    # IC +0.016 (predictive), medium-term -0.019 (a bounce reverts — momentum
-    # crash), long-term ~0. So it's weighted ONLY here at the short horizon.
-    'volatility_drawdown': 0.04,
+    # Volatility + drawdown RISK factor (high=safer). Backtest (175 tickers,
+    # 5y, Spearman IC of the risk-oriented factor): short +0.047, medium +0.020,
+    # long +0.030 — positive at every horizon. Weighted ~proportional to IC.
+    'volatility_drawdown': 0.05,
 
     # MACRO OVERLAY (12%) — reduced (shared signals contribute too)
     'macro_overlay': 0.04,
@@ -144,8 +144,8 @@ MEDIUM_TERM_WEIGHTS = {
     'fama_momentum': 0.05,
     'analyst_revisions': 0.02,
     'earnings_momentum': 0.01,
-    # (volatility_drawdown intentionally NOT weighted at MP — backtest IC
-    #  -0.019, a deep-drawdown bounce reverts over 1-3 months.)
+    # Volatility + drawdown RISK factor (inverted; backtest IC +0.020 at MP)
+    'volatility_drawdown': 0.02,
 
     # MACRO OVERLAY (15%) — slight reduction
     'macro_overlay': 0.05,
@@ -193,7 +193,8 @@ LONG_TERM_WEIGHTS = {
     'momentum_6m': 0.08,
     'fama_momentum': 0.08,
     'sector_rs': 0.04,
-    # (volatility_drawdown intentionally NOT weighted at LP — backtest IC ~0.)
+    # Volatility + drawdown RISK factor (inverted; backtest IC +0.030 at LP)
+    'volatility_drawdown': 0.03,
 
     # Quality (28%) — strong train, neutral OOS — keep meaningful but smaller
     'roe': 0.08,
@@ -443,15 +444,15 @@ _ETF_NEUTRAL_FACTORS = frozenset({
 
 
 def _volatility_drawdown_score(data: Dict[str, Any]) -> float:
-    """0-100 (high = bullish) reaction to drawdown-from-high + recent direction,
-    amplified by volatility (beta).
+    """0-100 (high = SAFER, low = risky) volatility + drawdown RISK factor.
 
-    Rationale: the base model compressed toward 50 for violently-moving names
-    because nothing scored volatility or drawdown directly. Here a deeply
-    drawn-down stock that is BOUNCING reads contrarian-bullish, one still
-    FALLING reads bearish (falling knife), and higher beta pushes the score
-    further from neutral (more conviction). This gives the short horizon a
-    reactive signal that differentiates it from the structural long horizon.
+    The intuition "deep crash + bounce = buy the dip" was tested and REJECTED:
+    over 175 tickers × 5y the bullish reading had NEGATIVE Spearman IC at every
+    horizon (short -0.047, medium -0.020, long -0.030) — buying high-beta,
+    deep-drawdown bouncers underperforms (low-volatility anomaly / momentum
+    crash). So this is oriented as a RISK signal: deep drawdown + high beta ->
+    LOW score (caution); near-highs / low-vol -> HIGH score. Inverted, the IC
+    is positive at all horizons, so it is weighted across all three.
     """
     price = data.get('price', 0) or 0
     hi = data.get('week52_high', 0) or 0
@@ -460,16 +461,19 @@ def _volatility_drawdown_score(data: Dict[str, Any]) -> float:
     if price <= 0 or hi <= 0:
         return 50.0
     dd = (price / hi - 1) * 100  # negative = below the 52w high
+    # RISK reading (high = safer). Deep drawdown is penalized; a bounce inside a
+    # deep drawdown is penalized MORE (dead-cat risk), a steady name near highs
+    # is rewarded.
     if dd <= -40:
-        base = 72 if mom_1m > 5 else (26 if mom_1m < -5 else 55)
+        base = 28 if mom_1m > 5 else (35 if mom_1m < -5 else 30)
     elif dd <= -20:
-        base = 63 if mom_1m > 3 else (35 if mom_1m < -3 else 50)
+        base = 37 if mom_1m > 3 else (42 if mom_1m < -3 else 40)
     elif dd <= -8:
-        base = 58 if mom_1m > 3 else (42 if mom_1m < -3 else 50)
-    else:  # near the highs
-        base = 58 if mom_1m > 5 else (46 if mom_1m < -5 else 50)
+        base = 45 if mom_1m > 3 else (48 if mom_1m < -3 else 46)
+    else:  # near the highs = lower drawdown risk
+        base = 60 if mom_1m > 0 else 54
     # Volatility amplifies conviction: push the deviation from 50 out further
-    # for high-beta names, compress it for sleepy low-beta ones.
+    # for high-beta names (more risk), compress it for sleepy low-beta ones.
     vol_mult = 1.0 + min(0.6, max(-0.2, (abs(beta) - 1.0) * 0.5))
     return max(5.0, min(95.0, 50 + (base - 50) * vol_mult))
 
