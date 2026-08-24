@@ -29,6 +29,10 @@ FINNHUB_API_KEY = os.environ.get('FINNHUB_API_KEY', '')
 # Si prefieres hardcodear tu key (menos seguro pero más fácil):
 # FINNHUB_API_KEY = 'tu_api_key_aqui'
 
+# Twelve Data - GRATIS (800 req/día), respaldo de precios/histórico
+# Obtener en: https://twelvedata.com/register  ->  copia el API key
+TWELVE_DATA_API_KEY = os.environ.get('TWELVE_DATA_API_KEY', '')
+
 # =============================================================================
 # PATHS
 # =============================================================================
@@ -278,6 +282,26 @@ def get_finnhub_key() -> str:
                         key = line.split('=', 1)[1].strip().strip('"\'')
                         break
 
+    return key
+
+
+def get_twelvedata_key() -> str:
+    """Obtiene la API key de Twelve Data (respaldo de precios/histórico)."""
+    key = TWELVE_DATA_API_KEY
+    if not key:
+        try:
+            import streamlit as st
+            key = st.secrets.get('TWELVE_DATA_API_KEY', '')
+        except Exception:
+            pass
+    if not key:
+        env_file = ROOT_DIR / '.env'
+        if env_file.exists():
+            with open(env_file) as f:
+                for line in f:
+                    if line.startswith('TWELVE_DATA_API_KEY='):
+                        key = line.split('=', 1)[1].strip().strip('"\'')
+                        break
     return key
 
 

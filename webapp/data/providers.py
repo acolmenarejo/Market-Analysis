@@ -1805,6 +1805,15 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
         _hist_empty = hist is None or (hasattr(hist, 'empty') and hist.empty)
         _info_empty_or_minimal = info is None or _info_is_empty(info)
 
+        # Twelve Data fallback for price history when Yahoo throttled it, so the
+        # chart/technicals/price don't go blank. Only fires when yfinance gave
+        # us nothing.
+        if _hist_empty:
+            _td_hist = _twelvedata_history(ticker, period)
+            if _td_hist is not None and not _td_hist.empty:
+                hist = _td_hist
+                _hist_empty = False
+
         if hist is None and info is None:
             return {
                 'ticker': ticker,
@@ -2464,6 +2473,50 @@ def _supplement_from_finnhub(ticker: str, info: dict) -> dict:
         return info
     except Exception:
         return info
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _twelvedata_history(ticker: str, period: str = '6mo') -> Optional[pd.DataFrame]:
+    """Daily OHLCV history from Twelve Data (free tier, 800 req/day).
+
+    Fallback for when yfinance's history endpoint is throttled. Returns a
+    DataFrame with yfinance-style columns (Open/High/Low/Close/Volume) and a
+    DatetimeIndex, or None if no key / miss.
+    """
+    try:
+        from webapp.config import get_twelvedata_key
+        api_key = get_twelvedata_key()
+        if not api_key:
+            return None
+        import requests
+        _sizes = {'1mo': 30, '3mo': 70, '6mo': 140, 'ytd': 200,
+                  '1y': 260, '2y': 520, '5y': 1300, 'max': 5000}
+        outputsize = _sizes.get(period, 200)
+        r = requests.get('https://api.twelvedata.com/time_series', params={
+            'symbol': ticker, 'interval': '1day',
+            'outputsize': outputsize, 'apikey': api_key,
+        }, timeout=8)
+        if not r.ok:
+            return None
+        data = r.json() or {}
+        if data.get('status') == 'error' or not data.get('values'):
+            return None
+        df = pd.DataFrame(data['values'])
+        if df.empty or 'datetime' not in df.columns:
+            return None
+        df['datetime'] = pd.to_datetime(df['datetime'])
+        df = df.set_index('datetime').sort_index()
+        rename = {'open': 'Open', 'high': 'High', 'low': 'Low',
+                  'close': 'Close', 'volume': 'Volume'}
+        df = df.rename(columns=rename)
+        for col in ('Open', 'High', 'Low', 'Close', 'Volume'):
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        keep = [c for c in ('Open', 'High', 'Low', 'Close', 'Volume') if c in df.columns]
+        df = df[keep].dropna(subset=['Close'])
+        return df if not df.empty else None
+    except Exception:
+        return None
 
 
 def _batch_download_info(tickers: List[str]) -> dict:
