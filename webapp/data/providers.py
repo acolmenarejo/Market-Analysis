@@ -1660,10 +1660,13 @@ def _yf_retry(fn, retries=4, base_delay=1.5, return_on_fail=None):
             # yfinance itself raises TypeError/KeyError/AttributeError when Yahoo
             # returns a null/garbage body under throttle (e.g. quote.py does
             # `quote in result` with result=None -> "argument of type 'NoneType'
-            # is not iterable"). Treat these as transient fetch failures too, so
-            # callers fall back to Finnhub/cache instead of crashing.
-            _is_malformed = isinstance(e, (TypeError, KeyError, AttributeError, ValueError))
-            if _is_rate or _is_malformed:
+            # is not iterable"). Fail these FAST (no backoff) — a null body won't
+            # self-heal in a few seconds and retrying every call with backoff
+            # made throttled loads take minutes. Return None so callers fall
+            # back to Finnhub/cache immediately instead of crashing.
+            if isinstance(e, (TypeError, KeyError, AttributeError, ValueError)):
+                return return_on_fail
+            if _is_rate:
                 if attempt < retries - 1:
                     time.sleep(base_delay * (2 ** attempt))
                     continue
