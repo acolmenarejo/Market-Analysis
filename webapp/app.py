@@ -2259,7 +2259,11 @@ def show_dashboard():
         </div>
         <style>@keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0.4;} }</style>
         """, unsafe_allow_html=True)
-        st.video("https://www.youtube.com/watch?v=iEpJwprxDdk", autoplay=True, muted=True)
+        # Yahoo Finance 24/7 stream — a persistent always-on feed, unlike a
+        # single scheduled broadcast whose recording expires and shows
+        # "live stream recording is not available". Swap this ID if it ever
+        # breaks.
+        st.video("https://www.youtube.com/watch?v=KQp-e_XQnDE", autoplay=True, muted=True)
 
     with col_markets:
         # Global Markets Table — Spot (C) vs Futures (F) side by side
@@ -3222,9 +3226,13 @@ def show_stock_analysis():
                 default_use_searchterm=False,
             )
             ticker = _norm_ticker(_picked) or _norm_ticker(default_ticker)
-            if _picked and ticker and ticker != st.session_state.get('selected_ticker'):
+            # Set the selection but DON'T st.rerun() here: selecting in the
+            # searchbox already triggers a rerun, and an extra one skipped the
+            # loading spinner and left the previous ticker's page faded in the
+            # background (looked broken). We continue this run with the new
+            # ticker so the spinner shows and the old content is replaced.
+            if _picked and ticker:
                 st.session_state.selected_ticker = ticker
-                st.rerun()
         else:
             # Fallback: plain input (suggestions only appear after Enter/blur).
             _raw = st.text_input("Ticker", default_ticker, key="analysis_ticker_input",
@@ -3252,8 +3260,27 @@ def show_stock_analysis():
 
     st.markdown("---")
 
+    # Loading UX: on a ticker change, show a clear placeholder that occupies
+    # the content area while data loads, so the previous ticker's page isn't
+    # left faded in the background. The placeholder is emptied once data is in.
+    _content_ph = st.empty()
+    _prev_loaded = st.session_state.get('_analysis_loaded_ticker')
+    if _prev_loaded != ticker:
+        with _content_ph.container():
+            st.markdown(
+                f"<div style='padding:60px 0; text-align:center; color:#8b949e;'>"
+                f"<div style='font-size:2rem;'>⏳</div>"
+                f"<div style='font-size:1.05rem; margin-top:8px;'>Cargando <b style='color:#e6edf3;'>{ticker}</b>…</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
     with st.spinner(f"Cargando {ticker}..."):
         data = get_stock_data(ticker)
+
+    _content_ph.empty()
+    if isinstance(data, dict) and 'error' not in data:
+        st.session_state['_analysis_loaded_ticker'] = ticker
 
     if not data or not isinstance(data, dict):
         st.error(f"Error: No data available for {ticker}")

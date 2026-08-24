@@ -406,7 +406,110 @@ def search_tickers(query: str, limit: int = 8) -> List[Dict[str, str]]:
     except Exception:
         pass
 
+    # 3) Full US market directory (~13k symbols) — consulted when Yahoo and the
+    # curated universe didn't fill the list, so ANY US-listed ticker is
+    # searchable even while Yahoo is throttled. Cached (mem 24h + disk), so
+    # this only pays a download on the very first miss.
+    if len(out) < limit:
+        try:
+            q_upper = query.upper()
+            have = {d['symbol'].upper() for d in out}
+            directory = get_us_symbol_directory()
+            prefix, substr = [], []
+            for row in directory:
+                sym = row['symbol'].upper()
+                if sym in have:
+                    continue
+                if sym.startswith(q_upper):
+                    prefix.append(row)
+                elif q_upper in sym or q_upper in row.get('name', '').upper():
+                    substr.append(row)
+                    if len(prefix) + len(substr) > limit * 4:
+                        break
+            for row in prefix + substr:
+                out.append({'symbol': row['symbol'], 'name': row.get('name') or row['symbol'],
+                            'exchange': row.get('exchange', ''), 'type': 'EQUITY'})
+                if len(out) >= limit:
+                    break
+        except Exception:
+            pass
+
     return out[:limit]
+
+
+US_SYMBOL_DIR_FILE = ROOT_DIR / 'data' / 'us_symbol_directory.parquet'
+
+
+@st.cache_data(ttl=86400, show_spinner=False)  # 24h — the listing changes slowly
+def get_us_symbol_directory() -> List[Dict[str, str]]:
+    """Full US-listed symbol directory (NASDAQ + NYSE/AMEX/NYSE Arca/Cboe).
+
+    Downloads NASDAQ Trader's public SymDir files (~13k symbols, no API key):
+      - nasdaqlisted.txt  (NASDAQ)
+      - otherlisted.txt   (NYSE, NYSE American, NYSE Arca, Cboe, IEX)
+
+    Persisted to disk (parquet) so it survives restarts and works as a search
+    fallback even when the download or Yahoo is unavailable. Test issues are
+    filtered out. Returns list of {symbol, name, exchange}.
+    """
+    out = []
+    exch_map = {'N': 'NYSE', 'A': 'NYSE American', 'P': 'NYSE Arca',
+                'Z': 'Cboe BZX', 'V': 'IEX'}
+    sources = [
+        ('https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt',
+         'Symbol', 'Security Name', None),
+        ('https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt',
+         'ACT Symbol', 'Security Name', 'Exchange'),
+    ]
+    try:
+        import requests
+        for url, sym_col, name_col, exch_col in sources:
+            try:
+                resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
+            except Exception:
+                continue
+            if not resp.ok:
+                continue
+            lines = resp.text.splitlines()
+            if not lines:
+                continue
+            idx = {h: i for i, h in enumerate(lines[0].split('|'))}
+            if sym_col not in idx:
+                continue
+            ti = idx.get('Test Issue')
+            for ln in lines[1:]:
+                if not ln or ln.startswith('File Creation Time'):
+                    continue
+                parts = ln.split('|')
+                if len(parts) <= idx[sym_col]:
+                    continue
+                sym = parts[idx[sym_col]].strip()
+                if not sym:
+                    continue
+                if ti is not None and len(parts) > ti and parts[ti].strip() == 'Y':
+                    continue
+                name = (parts[idx[name_col]].strip()
+                        if name_col in idx and len(parts) > idx[name_col] else sym)
+                if exch_col and exch_col in idx and len(parts) > idx[exch_col]:
+                    exch = exch_map.get(parts[idx[exch_col]].strip(), parts[idx[exch_col]].strip())
+                else:
+                    exch = 'NASDAQ'
+                out.append({'symbol': sym, 'name': name, 'exchange': exch})
+    except Exception:
+        pass
+
+    if out:
+        try:
+            pd.DataFrame(out).to_parquet(US_SYMBOL_DIR_FILE, index=False)
+        except Exception:
+            pass
+    elif US_SYMBOL_DIR_FILE.exists():
+        # Download failed — fall back to the last persisted copy.
+        try:
+            out = pd.read_parquet(US_SYMBOL_DIR_FILE).to_dict('records')
+        except Exception:
+            pass
+    return out
 
 
 # =============================================================================
@@ -5909,8 +6012,37 @@ def get_conviction_signals(ticker: str) -> Dict[str, Any]:
     # contrarian) and P/C OI. Both already 0-100 where >50 leans bullish.
     skew_s = opt_sig.get('skew_score', 50)
     pc_s = opt_sig.get('pc_ratio_score', 50)
-    flow_score = round((skew_s + pc_s) / 2, 1)
-    flow_available = abs(skew_s - 50) > 0.5 or abs(pc_s - 50) > 0.5
+    oi_flow_score = round((skew_s + pc_s) / 2, 1)
+    oi_flow_available = abs(skew_s - 50) > 0.5 or abs(pc_s - 50) > 0.5
+
+    # Supplement with the short-term VOLUME flow (0-7 DTE). It's directional
+    # (call-heavy tape = bullish, >50) and is often available when the OI-based
+    # skew/PC comes back neutral (Yahoo throttled or thin open interest), so it
+    # fills the "sin datos" gap that left this layer blank on liquid names.
+    try:
+        _stf = get_short_term_options_flow(ticker)
+    except Exception:
+        _stf = {'available': False}
+
+    if oi_flow_available:
+        flow_score = oi_flow_score
+        flow_available = True
+        flow_detail = ('Skew/P-C inclinado alcista' if flow_score > 50 else
+                       ('Skew/P-C inclinado bajista' if flow_score < 50 else
+                        'Posicionamiento de opciones neutral'))
+    elif _stf.get('available'):
+        flow_score = float(_stf.get('flow_score', 50))
+        flow_available = abs(flow_score - 50) > 0.5
+        _pcv = _stf.get('pc_volume_ratio', 0)
+        flow_detail = ('Flujo comprador de calls (0-7 DTE)' if flow_score > 50 else
+                       ('Flujo comprador de puts (0-7 DTE)' if flow_score < 50 else
+                        'Volumen de opciones equilibrado'))
+        if _pcv:
+            flow_detail += f' · P/C vol {_pcv:.2f}'
+    else:
+        flow_score = 50.0
+        flow_available = False
+        flow_detail = 'Posicionamiento de opciones neutral'
 
     layers = [
         {'name': 'Konkorde', 'label': 'Flujo institucional', 'weight': 0.42,
@@ -5923,10 +6055,7 @@ def get_conviction_signals(ticker: str) -> Dict[str, Any]:
                     'neutral': 'Sin sesgo institucional claro'}.get(konk['signal'], '')},
         {'name': 'Options Flow', 'label': 'Smart money (opciones)', 'weight': 0.33,
          'score': flow_score, 'direction': _dir_from_score(flow_score),
-         'available': flow_available,
-         'detail': ('Skew/P-C inclinado alcista' if flow_score > 50 else
-                    ('Skew/P-C inclinado bajista' if flow_score < 50 else
-                     'Posicionamiento de opciones neutral'))},
+         'available': flow_available, 'detail': flow_detail},
         {'name': 'Congress', 'label': 'Insiders políticos', 'weight': 0.25,
          'score': cong['score'], 'direction': _dir_from_score(cong['score']),
          'available': cong['available'], 'detail': cong['detail'] or 'Sin operaciones recientes'},
