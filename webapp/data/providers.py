@@ -7726,6 +7726,27 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
     score_mp = row.get('Score MP', 50)
     score_lp = row.get('Score LP', 50)
 
+    # Headline scores: use the ENRICHED per-ticker scores (options + fundamental
+    # momentum + Konkorde/Congress) so the numbers here match the score cards at
+    # the top of the detail page, which also use get_enriched_scores. Previously
+    # this panel used the lighter batch scores, so the same ticker showed two
+    # different CP/MP/LP numbers on one page. The batch `row` still drives the
+    # factor-breakdown chips. Cached, so this is a cache hit (no extra latency).
+    sig_cp = row.get('Señal CP', 'N/A')
+    sig_mp = row.get('Señal MP', 'N/A')
+    sig_lp = row.get('Señal LP', 'N/A')
+    try:
+        _enr = get_enriched_scores(ticker)
+        if _enr and 'error' not in _enr:
+            score_cp = _enr['short_term']['score']
+            score_mp = _enr['medium_term']['score']
+            score_lp = _enr['long_term']['score']
+            sig_cp = _enr['short_term'].get('signal', sig_cp)
+            sig_mp = _enr['medium_term'].get('signal', sig_mp)
+            sig_lp = _enr['long_term'].get('signal', sig_lp)
+    except Exception:
+        pass
+
     # Generate summary
     best_horizon = 'corto plazo' if score_cp >= score_mp and score_cp >= score_lp else (
         'medio plazo' if score_mp >= score_lp else 'largo plazo')
@@ -7788,19 +7809,19 @@ def get_score_explanation(ticker: str, skip_congress: bool = False, include_opti
         'company_name': stock_data.get('company_name', ticker),
         'short_term': {
             'score': score_cp,
-            'signal': row.get('Señal CP', 'N/A'),
+            'signal': sig_cp,
             'bullish_factors': [(f[0], f[1], f[2]) for f in st_bull],
             'bearish_factors': [(f[0], abs(f[1]), f[2]) for f in st_bear],
         },
         'medium_term': {
             'score': score_mp,
-            'signal': row.get('Señal MP', 'N/A'),
+            'signal': sig_mp,
             'bullish_factors': [(f[0], f[1], f[2]) for f in mt_bull],
             'bearish_factors': [(f[0], abs(f[1]), f[2]) for f in mt_bear],
         },
         'long_term': {
             'score': score_lp,
-            'signal': row.get('Señal LP', 'N/A'),
+            'signal': sig_lp,
             'bullish_factors': [(f[0], f[1], f[2]) for f in lt_bull],
             'bearish_factors': [(f[0], abs(f[1]), f[2]) for f in lt_bear],
         },

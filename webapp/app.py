@@ -3307,14 +3307,6 @@ def show_stock_analysis():
 
     with st.spinner(f"Cargando {ticker}..."):
         data = get_stock_data(ticker)
-        # Pre-warm heavy per-ticker caches behind the loading screen.
-        if _ticker_changed and isinstance(data, dict) and 'error' not in data:
-            try:
-                from webapp.data.providers import get_enriched_scores, get_conviction_signals
-                get_enriched_scores(ticker)
-                get_conviction_signals(ticker)
-            except Exception:
-                pass
 
     _content_ph.empty()
     if isinstance(data, dict) and 'error' not in data:
@@ -3375,16 +3367,51 @@ def show_stock_analysis():
         f'font-weight:700;font-size:0.85rem;">{ticker[:3]}</div>'
     )
 
-    # Use ENRICHED scoring for individual stock page — adds per-ticker
-    # options signals (IV, skew, P/C OI, GEX, squeeze, catalyst proximity),
-    # fundamental momentum (analyst revisions, insider clusters, ROIC trend,
-    # earnings streak), and shared macro proxies (sector rotation, credit
-    # risk). Far more differentiation across CP/MP/LP than the batch path.
-    try:
-        from webapp.data.providers import get_enriched_scores
-        enriched = get_enriched_scores(ticker)
-    except Exception:
-        enriched = None
+    def score_color(s):
+        if s >= 60: return '#10B981'
+        if s >= 50: return '#3B82F6'
+        if s >= 40: return '#F59E0B'
+        return '#EF4444'
+
+    # Progressive render: the header (name/price/sector) paints IMMEDIATELY from
+    # get_stock_data, and the multi-horizon score cards fill in a moment later
+    # via a placeholder — enriched scoring (options + fundamentals + Konkorde/
+    # Congress) is the slow part, so we don't make the user stare at a blank
+    # page waiting for it.
+    col_h1, col_h2 = st.columns([3, 2])
+    with col_h1:
+        st.markdown(f"""
+        <div style="background:#161b22; padding:18px; border-radius:10px;">
+            <div style="display:flex; align-items:center; gap:15px;">
+                {_logo_html}
+                <div>
+                    <h1 style="margin:0; font-size:2rem;">{ticker}</h1>
+                    <p style="margin:3px 0 0 0; color:#888; font-size:0.85rem;">{_esc(company_name)}</p>
+                    <p style="margin:2px 0 0 0; color:#666; font-size:0.75rem;">{_esc(sector)} · {_esc(industry)}</p>
+                </div>
+                <div style="margin-left:auto; text-align:right;">
+                    <div style="font-size:2rem; font-weight:bold;">&#36;{price:.2f}</div>
+                    <div style="color:{price_color}; font-size:1.1rem;">{change_sym} {abs(change_pct):.2f}%</div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    _scores_ph = col_h2.empty()
+    _scores_ph.markdown(
+        '<div style="background:#161b22; padding:12px; border-radius:10px; height:100%; '
+        'display:flex; align-items:center; justify-content:center; color:#8b949e; '
+        'font-size:0.85rem;">⏳ Calculando scores…</div>',
+        unsafe_allow_html=True)
+
+    # ENRICHED scoring — per-ticker options (IV, skew, P/C, GEX, squeeze,
+    # catalyst), fundamental momentum and Konkorde/Congress. Heavy, so it runs
+    # after the header is already on screen.
+    with st.spinner("Calculando scores multi-horizonte…"):
+        try:
+            from webapp.data.providers import get_enriched_scores
+            enriched = get_enriched_scores(ticker)
+        except Exception:
+            enriched = None
 
     if enriched and 'error' not in enriched:
         score_cp = enriched['short_term']['score']
@@ -3409,34 +3436,7 @@ def show_stock_analysis():
             score_cp = score_mp = score_lp = 0
             signal_cp = signal_mp = signal_lp = 'N/A'
 
-    # Header + Score badges
-    col_h1, col_h2 = st.columns([3, 2])
-    with col_h1:
-        st.markdown(f"""
-        <div style="background:#161b22; padding:18px; border-radius:10px;">
-            <div style="display:flex; align-items:center; gap:15px;">
-                {_logo_html}
-                <div>
-                    <h1 style="margin:0; font-size:2rem;">{ticker}</h1>
-                    <p style="margin:3px 0 0 0; color:#888; font-size:0.85rem;">{_esc(company_name)}</p>
-                    <p style="margin:2px 0 0 0; color:#666; font-size:0.75rem;">{_esc(sector)} · {_esc(industry)}</p>
-                </div>
-                <div style="margin-left:auto; text-align:right;">
-                    <div style="font-size:2rem; font-weight:bold;">&#36;{price:.2f}</div>
-                    <div style="color:{price_color}; font-size:1.1rem;">{change_sym} {abs(change_pct):.2f}%</div>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    def score_color(s):
-        if s >= 60: return '#10B981'
-        if s >= 50: return '#3B82F6'
-        if s >= 40: return '#F59E0B'
-        return '#EF4444'
-
-    with col_h2:
-        st.markdown(f"""
+    _scores_ph.markdown(f"""
         <div style="background:#161b22; padding:12px; border-radius:10px; height:100%;">
             <div style="font-size:0.75rem; color:#9CA3AF; margin-bottom:8px;">SCORES MULTI-HORIZONTE</div>
             <div style="display:flex; gap:10px;">
@@ -3467,7 +3467,8 @@ def show_stock_analysis():
     # political insiders point the same way, conviction is high; when they
     # conflict, it's a trap warning. GEX/squeeze = fuel (how far it can run).
     try:
-        _render_conviction_panel(ticker)
+        with st.spinner("Analizando convicción (Konkorde × opciones × Congress)…"):
+            _render_conviction_panel(ticker)
     except Exception:
         pass
 
@@ -3686,7 +3687,8 @@ def show_stock_analysis():
     # =========================================================================
     # SCORE EXPLANATION PANEL - Always visible, prominent
     # =========================================================================
-    explanation = get_score_explanation(ticker, skip_congress=True) or {}
+    with st.spinner("Generando análisis de score…"):
+        explanation = get_score_explanation(ticker, skip_congress=True) or {}
     if explanation and 'error' not in explanation:
         st.markdown(f"""
         <div style="background:linear-gradient(135deg, rgba(26,26,46,0.95), rgba(22,33,62,0.95));
