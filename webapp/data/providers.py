@@ -1845,6 +1845,12 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
                 info = _retry_info
         if _info_is_partial(info):
             info = _supplement_from_statements(ticker, info)
+        # Finnhub fallback (free tier): if Yahoo is still partial/empty after the
+        # statements fallback, fill missing fundamentals from Finnhub so the page
+        # isn't left with "sin datos". Only fills absent fields — real Yahoo
+        # values always win.
+        if _info_is_partial(info) or _info_is_empty(info):
+            info = _supplement_from_finnhub(ticker, info)
         if _info_is_empty(info):
             # Full Yahoo failure — try disk cache from a previous successful fetch
             _cached_funds = _load_fundamentals_cache()
@@ -1962,6 +1968,17 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
         except Exception:
             _change_pct = info.get('regularMarketChangePercent', 0) or 0
 
+        # yfinance's .news property parses the news endpoint and can raise
+        # internally (e.g. "argument of type 'NoneType' is not iterable") when
+        # the response is malformed/throttled. Isolate it so a news hiccup
+        # never fails the whole quote.
+        try:
+            _news = stock.news if hasattr(stock, 'news') else []
+            if not isinstance(_news, list):
+                _news = []
+        except Exception:
+            _news = []
+
         return {
             'ticker': ticker,
             'price': _live_price,
@@ -2006,7 +2023,7 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
             'employees': info.get('fullTimeEmployees', 0),
             'country': info.get('country', 'N/A'),
             'city': info.get('city', ''),
-            'news': stock.news if hasattr(stock, 'news') else [],
+            'news': _news,
 
             # Calendar & Events (para sección de noticias)
             'ex_dividend_date': info.get('exDividendDate'),
@@ -2046,9 +2063,19 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
         }
 
     except Exception as e:
+        # These exceptions are almost always yfinance throttling side-effects
+        # (a deep endpoint returned None and downstream code choked). Log the
+        # detail server-side, but surface the friendly transient rate-limit UI
+        # (Retry) instead of a raw Python error like "argument of type
+        # 'NoneType' is not iterable".
+        import traceback as _tb
+        print(f"get_stock_data({ticker}) exception: {e}")
+        _tb.print_exc()
         return {
             'ticker': ticker,
-            'error': str(e),
+            'error': 'rate_limited',
+            'error_message': 'rate_limit.message',
+            'error_detail': str(e),
             'price': 0,
             'rsi': 50,
             'macd_bullish': False,
@@ -2304,6 +2331,139 @@ def _supplement_from_statements(ticker: str, info: dict) -> dict:
     except Exception:
         pass
     return info
+
+
+@st.cache_data(ttl=3600, show_spinner=False)  # 1h — Finnhub free tier is 60/min
+def _finnhub_fundamentals(ticker: str) -> dict:
+    """Fetch company profile + basic financials from Finnhub (free tier).
+
+    Returns a dict keyed by yfinance-style info field names (decimals for
+    margins/ROE, so downstream _decimal_to_pct works) so it can be merged into
+    the yfinance info dict as a drop-in supplement. Empty dict if no key / miss.
+    """
+    out = {}
+    try:
+        from webapp.config import get_finnhub_key
+        api_key = get_finnhub_key()
+        if not api_key:
+            return out
+        import requests
+
+        def _num(v):
+            try:
+                f = float(v)
+                return f if f == f else None  # drop NaN
+            except (TypeError, ValueError):
+                return None
+
+        # 1) Company profile — identity + market cap + shares
+        try:
+            pr = requests.get('https://finnhub.io/api/v1/stock/profile2',
+                              params={'symbol': ticker, 'token': api_key}, timeout=5)
+            if pr.ok:
+                p = pr.json() or {}
+                if p.get('name'):
+                    out['longName'] = p['name']
+                if p.get('finnhubIndustry'):
+                    out['industry'] = p['finnhubIndustry']
+                    out.setdefault('sector', p['finnhubIndustry'])
+                if p.get('country'):
+                    out['country'] = p['country']
+                if p.get('weburl'):
+                    out['website'] = p['weburl']
+                _mc = _num(p.get('marketCapitalization'))
+                if _mc:  # Finnhub gives market cap in millions
+                    out['marketCap'] = _mc * 1e6
+                _sh = _num(p.get('shareOutstanding'))
+                if _sh:  # in millions
+                    out['sharesOutstanding'] = _sh * 1e6
+        except Exception:
+            pass
+
+        # 2) Basic financials (metric=all) — ratios & margins
+        try:
+            mr = requests.get('https://finnhub.io/api/v1/stock/metric',
+                              params={'symbol': ticker, 'metric': 'all', 'token': api_key},
+                              timeout=5)
+            if mr.ok:
+                m = (mr.json() or {}).get('metric', {}) or {}
+                # Margins / ROE / ROA come as PERCENT from Finnhub -> store as
+                # DECIMAL so get_stock_data's _decimal_to_pct renders correctly.
+                _pct_to_dec = [
+                    ('roeTTM', 'returnOnEquity'), ('roaTTM', 'returnOnAssets'),
+                    ('netProfitMarginTTM', 'profitMargins'),
+                    ('grossMarginTTM', 'grossMargins'),
+                    ('operatingMarginTTM', 'operatingMargins'),
+                    ('revenueGrowthTTMYoy', 'revenueGrowth'),
+                    ('epsGrowthTTMYoy', 'earningsGrowth'),
+                ]
+                for fh, yf_key in _pct_to_dec:
+                    v = _num(m.get(fh))
+                    if v is not None:
+                        out[yf_key] = v / 100.0
+                # Ratios stored as-is (same convention as yfinance)
+                _direct = [
+                    ('peTTM', 'trailingPE'), ('pb', 'priceToBook'),
+                    ('psTTM', 'priceToSalesTrailing12Months'),
+                    ('currentRatioQuarterly', 'currentRatio'),
+                    ('quickRatioQuarterly', 'quickRatio'),
+                    ('beta', 'beta'), ('epsTTM', 'trailingEps'),
+                    ('52WeekHigh', 'fiftyTwoWeekHigh'),
+                    ('52WeekLow', 'fiftyTwoWeekLow'),
+                    ('dividendYieldIndicatedAnnual', 'dividendYield'),
+                    ('enterpriseValue', 'enterpriseValue'),
+                ]
+                for fh, yf_key in _direct:
+                    v = _num(m.get(fh))
+                    if v is not None:
+                        out[yf_key] = v
+                # debt/equity: Finnhub gives a ratio (~0.45); yfinance uses %.
+                _de = _num(m.get('totalDebt/totalEquityQuarterly')
+                           or m.get('totalDebt/totalEquityAnnual'))
+                if _de is not None:
+                    out['debtToEquity'] = _de * 100.0
+        except Exception:
+            pass
+
+        # 3) Live quote — fallback price when yfinance history also failed
+        try:
+            qr = requests.get('https://finnhub.io/api/v1/quote',
+                              params={'symbol': ticker, 'token': api_key}, timeout=5)
+            if qr.ok:
+                q = qr.json() or {}
+                _c = _num(q.get('c'))
+                if _c:
+                    out['currentPrice'] = _c
+                    out['regularMarketPrice'] = _c
+                _pc = _num(q.get('pc'))
+                if _pc:
+                    out['previousClose'] = _pc
+                _dp = _num(q.get('dp'))
+                if _dp is not None:
+                    out['regularMarketChangePercent'] = _dp
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return out
+
+
+def _supplement_from_finnhub(ticker: str, info: dict) -> dict:
+    """Fill missing fields in a yfinance info dict from Finnhub (only keys that
+    are currently absent/None, so real yfinance values always win)."""
+    try:
+        fh = _finnhub_fundamentals(ticker)
+        if not fh:
+            return info
+        info = dict(info)
+        for k, v in fh.items():
+            if v is None:
+                continue
+            if info.get(k) is None or info.get(k) == 0:
+                info[k] = v
+        return info
+    except Exception:
+        return info
 
 
 def _batch_download_info(tickers: List[str]) -> dict:
