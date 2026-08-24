@@ -529,6 +529,10 @@ class ScorerBacktester:
             return {
                 'ticker': ticker,
                 'price': price,
+                # Trailing 52-week high (point-in-time, no look-ahead) + beta
+                # snapshot — inputs for the volatility_drawdown factor.
+                'week52_high': float(close.tail(252).max()),
+                'beta': float(info.get('beta', 1) or 1),
                 'vwap': vwap,
                 'rsi_14': rsi,
                 'macd_signal': macd_signal,

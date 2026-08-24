@@ -99,6 +99,11 @@ SHORT_TERM_WEIGHTS = {
     'momentum_1m': 0.03,
     'relative_strength': 0.03,
 
+    # Volatility + drawdown reaction. Backtest (3y, Spearman IC): short-term
+    # IC +0.016 (predictive), medium-term -0.019 (a bounce reverts — momentum
+    # crash), long-term ~0. So it's weighted ONLY here at the short horizon.
+    'volatility_drawdown': 0.04,
+
     # MACRO OVERLAY (12%) — reduced (shared signals contribute too)
     'macro_overlay': 0.04,
     'macro_sector_impact': 0.04,
@@ -139,6 +144,8 @@ MEDIUM_TERM_WEIGHTS = {
     'fama_momentum': 0.05,
     'analyst_revisions': 0.02,
     'earnings_momentum': 0.01,
+    # (volatility_drawdown intentionally NOT weighted at MP — backtest IC
+    #  -0.019, a deep-drawdown bounce reverts over 1-3 months.)
 
     # MACRO OVERLAY (15%) — slight reduction
     'macro_overlay': 0.05,
@@ -186,6 +193,7 @@ LONG_TERM_WEIGHTS = {
     'momentum_6m': 0.08,
     'fama_momentum': 0.08,
     'sector_rs': 0.04,
+    # (volatility_drawdown intentionally NOT weighted at LP — backtest IC ~0.)
 
     # Quality (28%) — strong train, neutral OOS — keep meaningful but smaller
     'roe': 0.08,
@@ -432,6 +440,38 @@ _ETF_NEUTRAL_FACTORS = frozenset({
     'congress_score', 'congress_long_term', 'institutional_flow',
     'dividend_growth_years', 'value_composite', 'quality_composite',
 })
+
+
+def _volatility_drawdown_score(data: Dict[str, Any]) -> float:
+    """0-100 (high = bullish) reaction to drawdown-from-high + recent direction,
+    amplified by volatility (beta).
+
+    Rationale: the base model compressed toward 50 for violently-moving names
+    because nothing scored volatility or drawdown directly. Here a deeply
+    drawn-down stock that is BOUNCING reads contrarian-bullish, one still
+    FALLING reads bearish (falling knife), and higher beta pushes the score
+    further from neutral (more conviction). This gives the short horizon a
+    reactive signal that differentiates it from the structural long horizon.
+    """
+    price = data.get('price', 0) or 0
+    hi = data.get('week52_high', 0) or 0
+    beta = data.get('beta', 1) or 1
+    mom_1m = data.get('momentum_1m', 0) or 0
+    if price <= 0 or hi <= 0:
+        return 50.0
+    dd = (price / hi - 1) * 100  # negative = below the 52w high
+    if dd <= -40:
+        base = 72 if mom_1m > 5 else (26 if mom_1m < -5 else 55)
+    elif dd <= -20:
+        base = 63 if mom_1m > 3 else (35 if mom_1m < -3 else 50)
+    elif dd <= -8:
+        base = 58 if mom_1m > 3 else (42 if mom_1m < -3 else 50)
+    else:  # near the highs
+        base = 58 if mom_1m > 5 else (46 if mom_1m < -5 else 50)
+    # Volatility amplifies conviction: push the deviation from 50 out further
+    # for high-beta names, compress it for sleepy low-beta ones.
+    vol_mult = 1.0 + min(0.6, max(-0.2, (abs(beta) - 1.0) * 0.5))
+    return max(5.0, min(95.0, 50 + (base - 50) * vol_mult))
 
 
 def _neutralize_etf_fundamentals(components: Dict[str, float]) -> None:
@@ -856,6 +896,7 @@ class MultiHorizonScorer:
         pro_regime = data.get('macro_regime', 'neutral')
         active_weights = apply_regime_overrides(active_weights, pro_regime, 'short_term')
 
+        components['volatility_drawdown'] = _volatility_drawdown_score(data)
         if data.get('is_etf'):
             _neutralize_etf_fundamentals(components)
 
@@ -1094,6 +1135,7 @@ class MultiHorizonScorer:
         pro_regime = data.get('macro_regime', 'neutral')
         active_weights = apply_regime_overrides(weights, pro_regime, 'medium_term')
 
+        components['volatility_drawdown'] = _volatility_drawdown_score(data)
         if data.get('is_etf'):
             _neutralize_etf_fundamentals(components)
 
@@ -1375,6 +1417,7 @@ class MultiHorizonScorer:
         pro_regime = data.get('macro_regime', 'neutral')
         active_weights = apply_regime_overrides(weights, pro_regime, 'long_term')
 
+        components['volatility_drawdown'] = _volatility_drawdown_score(data)
         if data.get('is_etf'):
             _neutralize_etf_fundamentals(components)
 
