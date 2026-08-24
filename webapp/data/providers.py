@@ -1655,7 +1655,15 @@ def _yf_retry(fn, retries=4, base_delay=1.5, return_on_fail=None):
         except Exception as e:
             err_str = str(e).lower()
             last_err = e
-            if 'too many requests' in err_str or 'rate limit' in err_str or '429' in err_str:
+            _is_rate = ('too many requests' in err_str or 'rate limit' in err_str
+                        or '429' in err_str)
+            # yfinance itself raises TypeError/KeyError/AttributeError when Yahoo
+            # returns a null/garbage body under throttle (e.g. quote.py does
+            # `quote in result` with result=None -> "argument of type 'NoneType'
+            # is not iterable"). Treat these as transient fetch failures too, so
+            # callers fall back to Finnhub/cache instead of crashing.
+            _is_malformed = isinstance(e, (TypeError, KeyError, AttributeError, ValueError))
+            if _is_rate or _is_malformed:
                 if attempt < retries - 1:
                     time.sleep(base_delay * (2 ** attempt))
                     continue
@@ -2096,14 +2104,11 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
         }
 
     except Exception as e:
-        # These exceptions are almost always yfinance throttling side-effects
-        # (a deep endpoint returned None and downstream code choked). Log the
-        # detail server-side, but surface the friendly transient rate-limit UI
-        # (Retry) instead of a raw Python error like "argument of type
-        # 'NoneType' is not iterable".
-        import traceback as _tb
-        print(f"get_stock_data({ticker}) exception: {e}")
-        _tb.print_exc()
+        # yfinance throttling side-effects are now swallowed upstream in
+        # _yf_retry, so reaching here is rare. Log concisely and surface the
+        # friendly transient rate-limit UI (Retry) rather than a raw Python
+        # error string.
+        print(f"get_stock_data({ticker}) unexpected error: {e}")
         return {
             'ticker': ticker,
             'error': 'rate_limited',
