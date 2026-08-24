@@ -1616,6 +1616,30 @@ def _yield_field(value) -> float:
     return v if abs(v) >= 0.15 else v * 100
 
 
+def _close_from_batch(data, sym: str):
+    """Extract a symbol's clean Close series from a yf.download() result.
+
+    Handles both a multi-index (group_by='ticker') frame and a single-symbol
+    frame. Returns the dropna'd Close Series, or None if unavailable. Shared by
+    the several batch-analysis functions that previously each defined their own
+    identical `_series` closure.
+    """
+    try:
+        if data is None:
+            return None
+        if getattr(data.columns, 'nlevels', 1) > 1:
+            if sym not in data.columns.get_level_values(0):
+                return None
+            df = data[sym].dropna(how='all')
+        else:
+            df = data
+        if df is None or df.empty or 'Close' not in df.columns:
+            return None
+        return df['Close'].dropna()
+    except Exception:
+        return None
+
+
 def _yf_retry(fn, retries=4, base_delay=1.5, return_on_fail=None):
     """Execute a yfinance call with exponential backoff on rate limit.
 
@@ -2342,6 +2366,34 @@ def _supplement_from_statements(ticker: str, info: dict) -> dict:
     return info
 
 
+def _finnhub_get(path: str, params: dict, timeout: int = 5):
+    """GET a Finnhub v1 endpoint and return parsed JSON, or None.
+
+    Centralizes the key lookup + token injection + requests boilerplate shared
+    by every Finnhub call.
+    """
+    try:
+        from webapp.config import get_finnhub_key
+        key = get_finnhub_key()
+        if not key:
+            return None
+        import requests
+        r = requests.get(f'https://finnhub.io/api/v1/{path}',
+                         params={**params, 'token': key}, timeout=timeout)
+        return r.json() if r.ok else None
+    except Exception:
+        return None
+
+
+def _safe_float(v):
+    """Parse to float, dropping None/NaN/garbage. Returns float or None."""
+    try:
+        f = float(v)
+        return f if f == f else None  # f != f -> NaN
+    except (TypeError, ValueError):
+        return None
+
+
 @st.cache_data(ttl=3600, show_spinner=False)  # 1h — Finnhub free tier is 60/min
 def _finnhub_fundamentals(ticker: str) -> dict:
     """Fetch company profile + basic financials from Finnhub (free tier).
@@ -2351,107 +2403,78 @@ def _finnhub_fundamentals(ticker: str) -> dict:
     the yfinance info dict as a drop-in supplement. Empty dict if no key / miss.
     """
     out = {}
+    _num = _safe_float
     try:
         from webapp.config import get_finnhub_key
-        api_key = get_finnhub_key()
-        if not api_key:
+        if not get_finnhub_key():
             return out
-        import requests
-
-        def _num(v):
-            try:
-                f = float(v)
-                return f if f == f else None  # drop NaN
-            except (TypeError, ValueError):
-                return None
 
         # 1) Company profile — identity + market cap + shares
-        try:
-            pr = requests.get('https://finnhub.io/api/v1/stock/profile2',
-                              params={'symbol': ticker, 'token': api_key}, timeout=5)
-            if pr.ok:
-                p = pr.json() or {}
-                if p.get('name'):
-                    out['longName'] = p['name']
-                if p.get('finnhubIndustry'):
-                    out['industry'] = p['finnhubIndustry']
-                    out.setdefault('sector', p['finnhubIndustry'])
-                if p.get('country'):
-                    out['country'] = p['country']
-                if p.get('weburl'):
-                    out['website'] = p['weburl']
-                _mc = _num(p.get('marketCapitalization'))
-                if _mc:  # Finnhub gives market cap in millions
-                    out['marketCap'] = _mc * 1e6
-                _sh = _num(p.get('shareOutstanding'))
-                if _sh:  # in millions
-                    out['sharesOutstanding'] = _sh * 1e6
-        except Exception:
-            pass
+        p = _finnhub_get('stock/profile2', {'symbol': ticker}) or {}
+        if p.get('name'):
+            out['longName'] = p['name']
+        if p.get('finnhubIndustry'):
+            out['industry'] = p['finnhubIndustry']
+            out.setdefault('sector', p['finnhubIndustry'])
+        if p.get('country'):
+            out['country'] = p['country']
+        if p.get('weburl'):
+            out['website'] = p['weburl']
+        _mc = _num(p.get('marketCapitalization'))
+        if _mc:  # Finnhub gives market cap in millions
+            out['marketCap'] = _mc * 1e6
+        _sh = _num(p.get('shareOutstanding'))
+        if _sh:  # in millions
+            out['sharesOutstanding'] = _sh * 1e6
 
         # 2) Basic financials (metric=all) — ratios & margins
-        try:
-            mr = requests.get('https://finnhub.io/api/v1/stock/metric',
-                              params={'symbol': ticker, 'metric': 'all', 'token': api_key},
-                              timeout=5)
-            if mr.ok:
-                m = (mr.json() or {}).get('metric', {}) or {}
-                # Margins / ROE / ROA come as PERCENT from Finnhub -> store as
-                # DECIMAL so get_stock_data's _decimal_to_pct renders correctly.
-                _pct_to_dec = [
-                    ('roeTTM', 'returnOnEquity'), ('roaTTM', 'returnOnAssets'),
-                    ('netProfitMarginTTM', 'profitMargins'),
-                    ('grossMarginTTM', 'grossMargins'),
-                    ('operatingMarginTTM', 'operatingMargins'),
-                    ('revenueGrowthTTMYoy', 'revenueGrowth'),
-                    ('epsGrowthTTMYoy', 'earningsGrowth'),
-                ]
-                for fh, yf_key in _pct_to_dec:
-                    v = _num(m.get(fh))
-                    if v is not None:
-                        out[yf_key] = v / 100.0
-                # Ratios stored as-is (same convention as yfinance)
-                _direct = [
-                    ('peTTM', 'trailingPE'), ('pb', 'priceToBook'),
-                    ('psTTM', 'priceToSalesTrailing12Months'),
-                    ('currentRatioQuarterly', 'currentRatio'),
-                    ('quickRatioQuarterly', 'quickRatio'),
-                    ('beta', 'beta'), ('epsTTM', 'trailingEps'),
-                    ('52WeekHigh', 'fiftyTwoWeekHigh'),
-                    ('52WeekLow', 'fiftyTwoWeekLow'),
-                    ('dividendYieldIndicatedAnnual', 'dividendYield'),
-                    ('enterpriseValue', 'enterpriseValue'),
-                ]
-                for fh, yf_key in _direct:
-                    v = _num(m.get(fh))
-                    if v is not None:
-                        out[yf_key] = v
-                # debt/equity: Finnhub gives a ratio (~0.45); yfinance uses %.
-                _de = _num(m.get('totalDebt/totalEquityQuarterly')
-                           or m.get('totalDebt/totalEquityAnnual'))
-                if _de is not None:
-                    out['debtToEquity'] = _de * 100.0
-        except Exception:
-            pass
+        m = ((_finnhub_get('stock/metric', {'symbol': ticker, 'metric': 'all'}) or {})
+             .get('metric') or {})
+        # Margins / ROE / ROA come as PERCENT from Finnhub -> store as DECIMAL
+        # so get_stock_data's _decimal_to_pct renders correctly.
+        for fh, yf_key in [
+            ('roeTTM', 'returnOnEquity'), ('roaTTM', 'returnOnAssets'),
+            ('netProfitMarginTTM', 'profitMargins'),
+            ('grossMarginTTM', 'grossMargins'),
+            ('operatingMarginTTM', 'operatingMargins'),
+            ('revenueGrowthTTMYoy', 'revenueGrowth'),
+            ('epsGrowthTTMYoy', 'earningsGrowth'),
+        ]:
+            v = _num(m.get(fh))
+            if v is not None:
+                out[yf_key] = v / 100.0
+        # Ratios stored as-is (same convention as yfinance)
+        for fh, yf_key in [
+            ('peTTM', 'trailingPE'), ('pb', 'priceToBook'),
+            ('psTTM', 'priceToSalesTrailing12Months'),
+            ('currentRatioQuarterly', 'currentRatio'),
+            ('quickRatioQuarterly', 'quickRatio'),
+            ('beta', 'beta'), ('epsTTM', 'trailingEps'),
+            ('52WeekHigh', 'fiftyTwoWeekHigh'), ('52WeekLow', 'fiftyTwoWeekLow'),
+            ('dividendYieldIndicatedAnnual', 'dividendYield'),
+            ('enterpriseValue', 'enterpriseValue'),
+        ]:
+            v = _num(m.get(fh))
+            if v is not None:
+                out[yf_key] = v
+        # debt/equity: Finnhub gives a ratio (~0.45); yfinance uses %.
+        _de = _num(m.get('totalDebt/totalEquityQuarterly')
+                   or m.get('totalDebt/totalEquityAnnual'))
+        if _de is not None:
+            out['debtToEquity'] = _de * 100.0
 
         # 3) Live quote — fallback price when yfinance history also failed
-        try:
-            qr = requests.get('https://finnhub.io/api/v1/quote',
-                              params={'symbol': ticker, 'token': api_key}, timeout=5)
-            if qr.ok:
-                q = qr.json() or {}
-                _c = _num(q.get('c'))
-                if _c:
-                    out['currentPrice'] = _c
-                    out['regularMarketPrice'] = _c
-                _pc = _num(q.get('pc'))
-                if _pc:
-                    out['previousClose'] = _pc
-                _dp = _num(q.get('dp'))
-                if _dp is not None:
-                    out['regularMarketChangePercent'] = _dp
-        except Exception:
-            pass
+        q = _finnhub_get('quote', {'symbol': ticker}) or {}
+        _c = _num(q.get('c'))
+        if _c:
+            out['currentPrice'] = _c
+            out['regularMarketPrice'] = _c
+        _pc = _num(q.get('pc'))
+        if _pc:
+            out['previousClose'] = _pc
+        _dp = _num(q.get('dp'))
+        if _dp is not None:
+            out['regularMarketChangePercent'] = _dp
     except Exception:
         pass
     return out
@@ -2685,14 +2708,7 @@ def get_sector_rotation_signals() -> Dict[str, Any]:
             return out
 
         def _series(sym):
-            try:
-                if data.columns.nlevels > 1 and sym in data.columns.get_level_values(0):
-                    df = data[sym].dropna(how='all')
-                else:
-                    df = data
-                return df['Close'].dropna() if 'Close' in df.columns else None
-            except Exception:
-                return None
+            return _close_from_batch(data, sym)
 
         spy = _series('SPY')
         if spy is None or len(spy) < 63:
@@ -2788,12 +2804,7 @@ def get_credit_default_proxy() -> Dict[str, Any]:
             return out
 
         def _series(sym):
-            try:
-                if data.columns.nlevels > 1 and sym in data.columns.get_level_values(0):
-                    return data[sym]['Close'].dropna()
-                return data['Close'].dropna()
-            except Exception:
-                return None
+            return _close_from_batch(data, sym)
 
         hyg = _series('HYG')
         lqd = _series('LQD')
@@ -4305,18 +4316,7 @@ def detect_macro_regime() -> Dict[str, Any]:
                            auto_adjust=True, threads=True, progress=False)
 
         def _series(sym: str):
-            try:
-                if data.columns.nlevels > 1 and sym in data.columns.get_level_values(0):
-                    df = data[sym].dropna(how='all')
-                elif data.columns.nlevels == 1:
-                    df = data
-                else:
-                    return None
-                if df.empty or 'Close' not in df.columns:
-                    return None
-                return df['Close'].dropna()
-            except Exception:
-                return None
+            return _close_from_batch(data, sym)
 
         tnx = _series('^TNX')   # 10Y yield (already %)
         irx = _series('^IRX')   # 13w T-bill yield (short rate proxy)
