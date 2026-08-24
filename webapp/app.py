@@ -4185,6 +4185,62 @@ def _show_options_tab(ticker: str, data: dict):
 
     st.markdown("### Options & Gamma Analysis")
 
+    # --- Short-term options FLOW (0-7 DTE, volume-based) -------------------
+    # Directional near-term signal: call-heavy tape = bullish, put-heavy =
+    # bearish. Complements the OI/GEX analysis below (which is medium-term
+    # and contrarian). Volume/OI > 1 flags fresh positioning opened today.
+    try:
+        from webapp.data.providers import get_short_term_options_flow
+        _flow = get_short_term_options_flow(ticker)
+    except Exception:
+        _flow = {'available': False}
+
+    if _flow.get('available'):
+        _bias = _flow['flow_bias']
+        _bias_emoji = {'bullish': '🟢', 'bearish': '🔴', 'neutral': '⚪'}.get(_bias, '⚪')
+        _bias_label = {'bullish': 'ALCISTA', 'bearish': 'BAJISTA',
+                       'neutral': 'NEUTRAL'}.get(_bias, 'Neutral')
+        _exp_txt = ', '.join(_flow['expirations_used']) or '—'
+        st.markdown(f"#### ⚡ Flujo de opciones corto plazo · {_exp_txt}")
+        fc = st.columns(5)
+        fc[0].metric("Sesgo del flujo", f"{_bias_emoji} {_bias_label}",
+                     f"score {_flow['flow_score']:.0f}/100")
+        fc[1].metric("P/C Volumen", f"{_flow['pc_volume_ratio']:.2f}",
+                     "call-heavy" if _flow['pc_volume_ratio'] < 1 else "put-heavy",
+                     delta_color="off")
+        fc[2].metric("Vol Calls", f"{_flow['call_volume']:,}")
+        fc[3].metric("Vol Puts", f"{_flow['put_volume']:,}")
+        _im = _flow['implied_move_pct']
+        fc[4].metric("Implied move", f"±{_im:.1f}%" if _im else "n/d",
+                     "a vencimiento", delta_color="off")
+
+        _ns = []
+        if _flow.get('notable_call_strike') is not None:
+            _ns.append(f"call más activa **{_flow['notable_call_strike']:g}**")
+        if _flow.get('notable_put_strike') is not None:
+            _ns.append(f"put más activa **{_flow['notable_put_strike']:g}**")
+        if _ns:
+            st.caption("🎯 " + " · ".join(_ns))
+
+        _unusual = _flow.get('unusual') or []
+        if _unusual:
+            import pandas as _pd_flow
+            _rows = []
+            for u in _unusual:
+                _rows.append({
+                    'Tipo': '📈 Call' if u['type'] == 'call' else '📉 Put',
+                    'Strike': f"{u['strike']:g}",
+                    'Venc.': u['expiry'],
+                    'Volumen': f"{u['volume']:,}",
+                    'OI': f"{u['open_interest']:,}",
+                    'Vol/OI': ('∞' if u['vol_oi'] == float('inf') else f"{u['vol_oi']:g}"),
+                    'Moneyness': f"{u['moneyness_pct']:+.1f}%",
+                })
+            with st.expander(f"🔥 Actividad inusual — {len(_unusual)} contratos (volumen > interés abierto)", expanded=True):
+                st.caption("Contratos con volumen alto que supera el interés abierto: posiciones abiertas hoy, señal de posicionamiento fresco.")
+                st.dataframe(_pd_flow.DataFrame(_rows), use_container_width=True, hide_index=True)
+        st.markdown("---")
+
     # Fetch expirations using the global _yf_retry (4 attempts, backoff
     # 1.5/3/6/12s) and a session cache so we don't hammer Yahoo on every
     # rerender of the page.

@@ -2727,6 +2727,188 @@ def get_options_signals(ticker: str) -> Dict[str, Any]:
     return out
 
 
+@st.cache_data(ttl=600, show_spinner=False)  # 10 min — flow is intraday-fresh
+def get_short_term_options_flow(ticker: str, max_dte: int = 7) -> Dict[str, Any]:
+    """Short-dated (0-max_dte DTE) options FLOW signal — VOLUME based.
+
+    Complements ``get_options_signals`` (which aggregates open interest over
+    1-3 months and reads contrarian). This one looks only at near-term
+    expirations and *today's volume*, so it captures fresh directional
+    positioning that tends to move price over the next few days. Interpreted
+    directionally: heavy call volume = bullish flow, heavy put volume = bearish.
+
+    Also surfaces "unusual" contracts where volume exceeds open interest
+    (i.e. new positioning being opened today, not existing OI being traded).
+
+    Returns:
+        available            : bool — False if no near-term options / rate-limited
+        expirations_used     : list[str]
+        call_volume, put_volume : int (total near-term contract volume)
+        pc_volume_ratio      : float  (put vol / call vol; lower = bullish)
+        flow_bias            : 'bullish' | 'bearish' | 'neutral'
+        flow_score           : 0-100 directional (>50 bullish, <50 bearish)
+        atm_iv_pct           : near-term ATM IV (annualized %)
+        implied_move_pct     : near-term ATM straddle implied move to expiry
+        notable_call_strike  : highest-volume call strike
+        notable_put_strike   : highest-volume put strike
+        unusual              : list[dict] top contracts by volume with vol>OI
+                               keys: type, strike, expiry, volume, open_interest,
+                               vol_oi, iv_pct, last_price, moneyness_pct
+    """
+    out = {
+        'available': False,
+        'expirations_used': [],
+        'call_volume': 0,
+        'put_volume': 0,
+        'pc_volume_ratio': 0.0,
+        'flow_bias': 'neutral',
+        'flow_score': 50.0,
+        'atm_iv_pct': 0.0,
+        'implied_move_pct': 0.0,
+        'notable_call_strike': None,
+        'notable_put_strike': None,
+        'unusual': [],
+    }
+    try:
+        stock = yf.Ticker(ticker)
+        info = _yf_retry(lambda: stock.info) or {}
+        price = info.get('currentPrice') or info.get('regularMarketPrice') or 0
+        if not price or price <= 0:
+            hist = _yf_retry(lambda: stock.history(period='5d'))
+            if hist is not None and not hist.empty:
+                price = float(hist['Close'].iloc[-1])
+        if not price or price <= 0:
+            return out
+
+        try:
+            expirations = _yf_retry(lambda: stock.options) or []
+        except Exception:
+            expirations = []
+        if not expirations:
+            return out
+
+        now = pd.Timestamp.utcnow().tz_localize(None)
+        near = []
+        for exp in expirations:
+            try:
+                dte = (pd.Timestamp(exp) - now).days
+            except Exception:
+                continue
+            if 0 <= dte <= max_dte:
+                near.append(exp)
+        # Always keep at least the nearest expiration so the signal exists even
+        # when the next expiry is slightly beyond max_dte (e.g. monthlies only).
+        if not near and expirations:
+            near = [expirations[0]]
+
+        call_vol = 0
+        put_vol = 0
+        atm_call_ivs, atm_put_ivs = [], []
+        atm_call_price = atm_put_price = 0.0
+        call_strike_vol = {}
+        put_strike_vol = {}
+        unusual = []
+        atm_lo, atm_hi = price * 0.98, price * 1.02
+
+        for exp_idx, exp in enumerate(near[:3]):
+            try:
+                chain = _yf_retry(lambda: stock.option_chain(exp))
+                if chain is None:
+                    continue
+            except Exception:
+                continue
+            for side, df in (('call', chain.calls), ('put', chain.puts)):
+                if df is None or df.empty:
+                    continue
+                d = df.copy()
+                for col in ('openInterest', 'volume', 'impliedVolatility', 'lastPrice', 'strike'):
+                    if col in d.columns:
+                        d[col] = pd.to_numeric(d[col], errors='coerce').fillna(0)
+                vol_sum = int(d['volume'].sum())
+                if side == 'call':
+                    call_vol += vol_sum
+                else:
+                    put_vol += vol_sum
+
+                # ATM IV + straddle (nearest expiration only)
+                atm = d[(d['strike'] >= atm_lo) & (d['strike'] <= atm_hi)]
+                if not atm.empty:
+                    iv_mean = float(atm['impliedVolatility'].mean())
+                    idx_near = (atm['strike'] - price).abs().idxmin()
+                    last_p = float(atm.loc[idx_near, 'lastPrice'] or 0)
+                    if side == 'call':
+                        atm_call_ivs.append(iv_mean)
+                        if exp_idx == 0:
+                            atm_call_price = last_p
+                    else:
+                        atm_put_ivs.append(iv_mean)
+                        if exp_idx == 0:
+                            atm_put_price = last_p
+
+                # Per-strike volume + unusual detection
+                for _, r in d.iterrows():
+                    v = float(r.get('volume', 0))
+                    if v <= 0:
+                        continue
+                    strike = float(r.get('strike', 0))
+                    oi = float(r.get('openInterest', 0))
+                    bucket = call_strike_vol if side == 'call' else put_strike_vol
+                    bucket[strike] = bucket.get(strike, 0) + v
+                    # Unusual: meaningful volume AND volume exceeds standing OI
+                    # (new positioning), filter out illiquid noise.
+                    if v >= 200 and v > max(oi, 1):
+                        unusual.append({
+                            'type': side,
+                            'strike': strike,
+                            'expiry': exp,
+                            'volume': int(v),
+                            'open_interest': int(oi),
+                            'vol_oi': round(v / oi, 1) if oi > 0 else float('inf'),
+                            'iv_pct': round(float(r.get('impliedVolatility', 0)) * 100, 1),
+                            'last_price': round(float(r.get('lastPrice', 0)), 2),
+                            'moneyness_pct': round((strike / price - 1) * 100, 1),
+                        })
+
+        if call_vol == 0 and put_vol == 0:
+            return out
+
+        out['available'] = True
+        out['expirations_used'] = near[:3]
+        out['call_volume'] = call_vol
+        out['put_volume'] = put_vol
+        pc = (put_vol / call_vol) if call_vol > 0 else float('inf')
+        out['pc_volume_ratio'] = round(pc, 2) if pc != float('inf') else 99.0
+
+        # Directional flow score (NOT contrarian): call-heavy tape = bullish.
+        if pc < 0.5:
+            out['flow_score'], out['flow_bias'] = 78.0, 'bullish'
+        elif pc < 0.7:
+            out['flow_score'], out['flow_bias'] = 66.0, 'bullish'
+        elif pc <= 1.1:
+            out['flow_score'], out['flow_bias'] = 50.0, 'neutral'
+        elif pc <= 1.6:
+            out['flow_score'], out['flow_bias'] = 38.0, 'bearish'
+        else:
+            out['flow_score'], out['flow_bias'] = 25.0, 'bearish'
+
+        if atm_call_ivs or atm_put_ivs:
+            out['atm_iv_pct'] = round(float(np.mean(atm_call_ivs + atm_put_ivs)) * 100, 1)
+        if atm_call_price > 0 and atm_put_price > 0:
+            out['implied_move_pct'] = round(((atm_call_price + atm_put_price) / price) * 100, 1)
+
+        if call_strike_vol:
+            out['notable_call_strike'] = max(call_strike_vol, key=call_strike_vol.get)
+        if put_strike_vol:
+            out['notable_put_strike'] = max(put_strike_vol, key=put_strike_vol.get)
+
+        # Top unusual contracts by raw volume
+        unusual.sort(key=lambda x: x['volume'], reverse=True)
+        out['unusual'] = unusual[:8]
+    except Exception:
+        pass
+    return out
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_fundamental_momentum_signals(ticker: str) -> Dict[str, Any]:
     """Medium-term fundamental momentum signals — analyst revisions, insider
