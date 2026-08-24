@@ -1056,6 +1056,27 @@ def get_market_overview_data():
         except Exception:
             pass
 
+    # 3) Crypto in real-time from exchange APIs (free, no key). yfinance crypto
+    # quotes lag/throttle; overwrite BTC/ETH with live spot + 24h change so the
+    # strip is never stale or "sin datos" for crypto.
+    try:
+        from webapp.data.providers import get_crypto_realtime
+        for ticker in tickers_info:
+            if not ('BTC' in ticker or 'ETH' in ticker):
+                continue
+            live = get_crypto_realtime(ticker)
+            if live and live.get('price'):
+                info = tickers_info[ticker]
+                results[ticker] = {
+                    'name': info['name'], 'emoji': info['emoji'],
+                    'price': live['price'],
+                    'change': live.get('change', 0),
+                    'sparkline': live.get('sparkline') or (
+                        results.get(ticker, {}).get('sparkline', [])),
+                }
+    except Exception:
+        pass
+
     return results
 
 

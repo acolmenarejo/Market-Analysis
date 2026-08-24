@@ -2519,6 +2519,49 @@ def _twelvedata_history(ticker: str, period: str = '6mo') -> Optional[pd.DataFra
         return None
 
 
+@st.cache_data(ttl=60, show_spinner=False)  # 60s — crypto is real-time, keep fresh
+def get_crypto_realtime(yf_symbol: str) -> Optional[Dict[str, Any]]:
+    """Real-time crypto spot from public exchange APIs (no key, no limit).
+
+    yfinance crypto quotes lag and throttle; exchanges stream them live for
+    free. Kraken OHLC (hourly) gives price + 24h change + sparkline in one
+    call; Coinbase spot is a price-only fallback. Returns
+    {price, change, sparkline} or None. `yf_symbol` is e.g. 'BTC-USD'.
+    """
+    base = yf_symbol.split('-')[0].upper()
+    # Kraken uses XBT for Bitcoin; everything else maps 1:1 to {BASE}USD.
+    kraken_pair = ('XBT' if base == 'BTC' else base) + 'USD'
+    try:
+        import requests
+        r = requests.get('https://api.kraken.com/0/public/OHLC',
+                         params={'pair': kraken_pair, 'interval': 60}, timeout=6)
+        if r.ok:
+            res = (r.json() or {}).get('result', {}) or {}
+            keys = [k for k in res if k != 'last']
+            if keys:
+                arr = res[keys[0]]
+                closes = [float(x[4]) for x in arr if x and x[4] is not None]
+                if len(closes) >= 2:
+                    price = closes[-1]
+                    ref = closes[-24] if len(closes) >= 24 else closes[0]
+                    change = ((price / ref) - 1) * 100 if ref else 0.0
+                    return {'price': price, 'change': change,
+                            'sparkline': closes[-20:]}
+    except Exception:
+        pass
+    # Coinbase price-only fallback
+    try:
+        import requests
+        r = requests.get(f'https://api.coinbase.com/v2/prices/{base}-USD/spot', timeout=6)
+        if r.ok:
+            amt = (((r.json() or {}).get('data') or {}).get('amount'))
+            if amt:
+                return {'price': float(amt), 'change': 0.0, 'sparkline': []}
+    except Exception:
+        pass
+    return None
+
+
 def _batch_download_info(tickers: List[str]) -> dict:
     """Download fundamental info for all tickers using thread pool.
 
