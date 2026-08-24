@@ -355,82 +355,78 @@ def search_tickers(query: str, limit: int = 8) -> List[Dict[str, str]]:
     query = (query or '').strip()
     if len(query) < 1:
         return []
+    q_upper = query.upper()
 
     out = []
-    # 1) Try Yahoo's official search endpoint
-    try:
-        import requests
-        resp = requests.get(
-            'https://query2.finance.yahoo.com/v1/finance/search',
-            params={'q': query, 'quotesCount': limit, 'newsCount': 0,
-                    'enableFuzzyQuery': 'true'},
-            headers={'User-Agent': 'Mozilla/5.0'},
-            timeout=3,
-        )
-        if resp.ok:
-            data = resp.json()
-            for q in (data.get('quotes') or [])[:limit]:
-                sym = q.get('symbol')
-                if not sym:
-                    continue
-                out.append({
-                    'symbol': sym,
-                    'name': q.get('shortname') or q.get('longname') or sym,
-                    'exchange': q.get('exchDisp', '') or q.get('exchange', ''),
-                    'type': q.get('quoteType', ''),
-                })
-    except Exception:
-        pass
+    have = set()
 
-    # 2) Local universe matches — ALWAYS merged in (not only when Yahoo
-    # returns nothing) so a known ticker the user is typing always surfaces
-    # even if Yahoo is throttled/slow. Prefix matches rank ahead of plain
-    # substring matches. Deduped against whatever Yahoo already returned.
+    def _add(sym, name, exch='', typ='EQUITY'):
+        su = sym.upper()
+        if su in have:
+            return
+        have.add(su)
+        out.append({'symbol': sym, 'name': name or sym, 'exchange': exch, 'type': typ})
+
+    # 1) LOCAL FIRST — instant, no network. This is what makes the dropdown
+    # appear immediately as you type. Curated TICKER_UNIVERSE ranks ahead of
+    # the full US directory; within each, prefix matches beat substring/name.
     try:
         from webapp.config import TICKER_UNIVERSE
-        q_upper = query.upper()
-        have = {d['symbol'].upper() for d in out}
-        prefix, substr = [], []
-        for t in TICKER_UNIVERSE:
-            tu = t.upper()
-            if tu in have:
-                continue
-            if tu.startswith(q_upper):
-                prefix.append(t)
-            elif q_upper in tu:
-                substr.append(t)
-        for t in prefix + substr:
-            out.append({'symbol': t, 'name': t, 'exchange': '', 'type': 'EQUITY'})
+        uni_prefix = [t for t in TICKER_UNIVERSE if t.upper().startswith(q_upper)]
+        uni_substr = [t for t in TICKER_UNIVERSE
+                      if q_upper in t.upper() and not t.upper().startswith(q_upper)]
+        for t in uni_prefix + uni_substr:
+            _add(t, t)
             if len(out) >= limit:
                 break
     except Exception:
         pass
 
-    # 3) Full US market directory (~13k symbols) — consulted when Yahoo and the
-    # curated universe didn't fill the list, so ANY US-listed ticker is
-    # searchable even while Yahoo is throttled. Cached (mem 24h + disk), so
-    # this only pays a download on the very first miss.
     if len(out) < limit:
         try:
-            q_upper = query.upper()
-            have = {d['symbol'].upper() for d in out}
-            directory = get_us_symbol_directory()
-            prefix, substr = [], []
+            directory = get_us_symbol_directory()  # cached in-mem + disk
+            d_prefix, d_sym_sub, d_name_sub = [], [], []
+            name_ok = len(q_upper) >= 2
             for row in directory:
-                sym = row['symbol'].upper()
-                if sym in have:
+                su = row['symbol'].upper()
+                if su in have:
                     continue
-                if sym.startswith(q_upper):
-                    prefix.append(row)
-                elif q_upper in sym or q_upper in row.get('name', '').upper():
-                    substr.append(row)
-                    if len(prefix) + len(substr) > limit * 4:
-                        break
-            for row in prefix + substr:
-                out.append({'symbol': row['symbol'], 'name': row.get('name') or row['symbol'],
-                            'exchange': row.get('exchange', ''), 'type': 'EQUITY'})
+                if su.startswith(q_upper):
+                    d_prefix.append(row)
+                elif q_upper in su:
+                    d_sym_sub.append(row)
+                elif name_ok and q_upper in row.get('name', '').upper():
+                    d_name_sub.append(row)
+            for row in d_prefix + d_sym_sub + d_name_sub:
+                _add(row['symbol'], row.get('name'), row.get('exchange', ''))
                 if len(out) >= limit:
                     break
+        except Exception:
+            pass
+
+    # 2) Yahoo — only to TOP UP when local is sparse (international tickers,
+    # fuzzy company-name matches). Short timeout so a slow/throttled Yahoo
+    # never stalls as-you-type suggestions.
+    if len(out) < limit:
+        try:
+            import requests
+            resp = requests.get(
+                'https://query2.finance.yahoo.com/v1/finance/search',
+                params={'q': query, 'quotesCount': limit, 'newsCount': 0,
+                        'enableFuzzyQuery': 'true'},
+                headers={'User-Agent': 'Mozilla/5.0'},
+                timeout=2.5,
+            )
+            if resp.ok:
+                for q in (resp.json().get('quotes') or []):
+                    sym = q.get('symbol')
+                    if not sym:
+                        continue
+                    _add(sym, q.get('shortname') or q.get('longname') or sym,
+                         q.get('exchDisp', '') or q.get('exchange', ''),
+                         q.get('quoteType', '') or 'EQUITY')
+                    if len(out) >= limit:
+                        break
         except Exception:
             pass
 
@@ -6229,6 +6225,27 @@ def get_enriched_scores(ticker: str) -> Dict[str, Any]:
     if mom_1m < -3:
         macd_signal = 'bearish_cross' if not macd_bullish else 'bullish'
 
+    # CP options fallback: the heavy OI-based options signals (skew/PC) often
+    # come back neutral (50) when Yahoo throttles the deep chain fetch, which
+    # collapses the short-term score onto the shared momentum/macro core and
+    # makes CP≈MP≈LP look suspiciously flat. When that happens, fall back to
+    # the lighter short-term VOLUME flow (fewer requests, more likely to
+    # succeed) as a real directional CP signal. Both are oriented high=bullish.
+    _cp_skew = opt_sig.get('skew_score', 50)
+    _cp_pc = opt_sig.get('pc_ratio_score', 50)
+    if abs(_cp_skew - 50) < 0.5 and abs(_cp_pc - 50) < 0.5:
+        try:
+            _stf = get_short_term_options_flow(ticker)
+        except Exception:
+            _stf = {'available': False}
+        if _stf.get('available'):
+            _fs = float(_stf.get('flow_score', 50))
+            _cp_skew = _cp_pc = _fs
+            opt_sig = dict(opt_sig)
+            opt_sig['st_flow_score'] = _fs
+            opt_sig['st_flow_bias'] = _stf.get('flow_bias')
+            opt_sig['st_pc_volume_ratio'] = _stf.get('pc_volume_ratio')
+
     # Build enriched scoring_data
     sd = {
         'ticker': ticker,
@@ -6257,8 +6274,8 @@ def get_enriched_scores(ticker: str) -> Dict[str, Any]:
         # === ENRICHED SIGNALS — OPTIONS (drive CP) ===
         'iv_percentile_realized': opt_sig.get('iv_percentile_realized', 50),
         'iv_percentile': opt_sig.get('iv_percentile_realized', 50),
-        'skew_score': opt_sig.get('skew_score', 50),
-        'pc_ratio_score': opt_sig.get('pc_ratio_score', 50),
+        'skew_score': _cp_skew,
+        'pc_ratio_score': _cp_pc,
         'gex_regime_score': opt_sig.get('gex_regime_score', 50),
         'squeeze_potential_score': opt_sig.get('squeeze_potential_score', 50),
         'catalyst_proximity_score': opt_sig.get('catalyst_proximity_score', 50),
