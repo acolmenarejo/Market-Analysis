@@ -1820,6 +1820,93 @@ def get_historical_pe(ticker: str) -> dict:
         }
 
 
+# CBOE publishes index options under an underscore-prefixed root.
+_CBOE_INDEX_MAP = {'^SPX': '_SPX', '^VIX': '_VIX', '^NDX': '_NDX',
+                   '^RUT': '_RUT', '^DJX': '_DJX', '^OEX': '_OEX'}
+
+
+@st.cache_data(ttl=600, show_spinner=False)  # 10min — CBOE feed is 15min delayed
+def get_cboe_option_chain(ticker: str) -> Optional[Dict[str, Any]]:
+    """Full option chain from CBOE's delayed-quotes feed. Free, no API key.
+
+    Yahoo is the only options source in the app and throttles hard from
+    hosted deploys, leaving the Options & Gamma tab dead. CBOE serves the
+    whole surface in one request — every expiry, with dealer-relevant greeks
+    already computed — so it doubles as a throttle-proof fallback.
+
+    Returns {'price': float, 'expirations': [YYYY-MM-DD],
+             'by_exp': {exp: {'calls': DataFrame, 'puts': DataFrame}}}
+    with yfinance-compatible columns, or None on failure. Quotes are
+    delayed ~15 minutes.
+    """
+    import re
+    import requests
+    try:
+        root = _CBOE_INDEX_MAP.get(ticker.upper(), ticker.upper())
+        r = requests.get(
+            f'https://cdn.cboe.com/api/global/delayed_quotes/options/{root}.json',
+            headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
+        if not r.ok:
+            return None
+        data = (r.json() or {}).get('data') or {}
+        contracts = data.get('options') or []
+        if not contracts:
+            return None
+
+        # OCC symbol: ROOT + YYMMDD + C/P + strike*1000, zero-padded to 8.
+        pat = re.compile(r'^([A-Z0-9]+?)(\d{6})([CP])(\d{8})$')
+        rows = []
+        for o in contracts:
+            m = pat.match(o.get('option', ''))
+            if not m:
+                continue
+            _root, ymd, cp, strike = m.groups()
+            rows.append({
+                'expiration': f'20{ymd[:2]}-{ymd[2:4]}-{ymd[4:]}',
+                '_is_call': cp == 'C',
+                'contractSymbol': o['option'],
+                'strike': int(strike) / 1000.0,
+                'lastPrice': o.get('last_trade_price') or 0.0,
+                'bid': o.get('bid') or 0.0,
+                'ask': o.get('ask') or 0.0,
+                'change': o.get('change') or 0.0,
+                'percentChange': o.get('percent_change') or 0.0,
+                'volume': o.get('volume') or 0.0,
+                'openInterest': o.get('open_interest') or 0.0,
+                'impliedVolatility': o.get('iv') or 0.0,
+                'delta': o.get('delta') or 0.0,
+                'gamma': o.get('gamma') or 0.0,
+                'theta': o.get('theta') or 0.0,
+                'vega': o.get('vega') or 0.0,
+            })
+        if not rows:
+            return None
+
+        df = pd.DataFrame(rows)
+        price = float(data.get('current_price') or 0)
+        df['inTheMoney'] = np.where(df['_is_call'], df['strike'] < price,
+                                    df['strike'] > price)
+
+        # The feed keeps the session's expiring series listed after the
+        # close; they carry no forward gamma, so drop anything past.
+        today = datetime.now().strftime('%Y-%m-%d')
+        df = df[df['expiration'] >= today]
+        if df.empty:
+            return None
+
+        by_exp = {}
+        for exp, grp in df.groupby('expiration'):
+            cols = [c for c in grp.columns if c not in ('expiration', '_is_call')]
+            by_exp[exp] = {
+                'calls': grp[grp['_is_call']][cols].sort_values('strike').reset_index(drop=True),
+                'puts': grp[~grp['_is_call']][cols].sort_values('strike').reset_index(drop=True),
+            }
+        return {'price': price, 'expirations': sorted(by_exp.keys()), 'by_exp': by_exp}
+    except Exception as e:
+        print(f"get_cboe_option_chain({ticker}) failed: {e}")
+        return None
+
+
 def _price_fallbacks_configured() -> bool:
     """True if any non-Yahoo price/fundamentals source has an API key.
 

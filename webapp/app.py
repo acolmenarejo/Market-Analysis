@@ -4360,6 +4360,17 @@ def _show_options_tab(ticker: str, data: dict):
         if expirations:
             st.session_state[_exp_cache_key] = expirations
 
+    # CBOE fallback — Yahoo is the only options source and throttles hard from
+    # hosted deploys. CBOE needs no key and returns the whole surface at once,
+    # so the tab degrades to 15min-delayed data instead of going blank.
+    _cboe = None
+    if not expirations:
+        from webapp.data.providers import get_cboe_option_chain
+        _cboe = get_cboe_option_chain(ticker)
+        if _cboe:
+            expirations = _cboe['expirations']
+            st.session_state[_exp_cache_key] = expirations
+
     if not expirations:
         st.warning(t("options.rate_limit_warn"))
         col_r1, col_r2 = st.columns([1, 4])
@@ -4388,6 +4399,19 @@ def _show_options_tab(ticker: str, data: dict):
         if chain is not None:
             st.session_state[_chain_cache_key] = chain
 
+    # Same CBOE fallback for the chain itself: Yahoo can serve the expiry list
+    # and still throttle the per-expiry request.
+    _src_key = f"opt_src_{ticker}_{selected_exp}"
+    if chain is None:
+        from webapp.data.providers import get_cboe_option_chain
+        _cboe = _cboe or get_cboe_option_chain(ticker)
+        _exp_data = (_cboe or {}).get('by_exp', {}).get(selected_exp)
+        if _exp_data:
+            from types import SimpleNamespace
+            chain = SimpleNamespace(calls=_exp_data['calls'], puts=_exp_data['puts'])
+            st.session_state[_chain_cache_key] = chain
+            st.session_state[_src_key] = 'cboe'
+
     if chain is None:
         st.warning(
             f"⚠️ Yahoo rate-limit al cargar la cadena {selected_exp}. "
@@ -4397,6 +4421,32 @@ def _show_options_tab(ticker: str, data: dict):
             st.session_state.pop(_chain_cache_key, None)
             st.rerun()
         return
+
+    if st.session_state.get(_src_key) == 'cboe':
+        st.caption(t("options.source_cboe"))
+
+    def _chain_for(exp: str):
+        """Chain for `exp`: session cache → Yahoo → CBOE. None if all fail.
+
+        The term-structure and multi-expiry GEX sections each walk several
+        expirations, which is exactly when Yahoo starts throttling. They share
+        this so one throttled expiry doesn't blank the whole section.
+        """
+        _k = f"opt_chain_{ticker}_{exp}"
+        _c = st.session_state.get(_k)
+        if _c is None:
+            _c = _yf_r(lambda: stock.option_chain(exp))
+        if _c is None:
+            from types import SimpleNamespace
+            from webapp.data.providers import get_cboe_option_chain
+            # Cached provider-side (10min TTL), so repeat calls are free.
+            _d = (get_cboe_option_chain(ticker) or {}).get('by_exp', {}).get(exp)
+            if _d:
+                _c = SimpleNamespace(calls=_d['calls'], puts=_d['puts'])
+        if _c is not None:
+            st.session_state[_k] = _c
+        return _c
+
     calls = chain.calls.copy()
     puts = chain.puts.copy()
 
@@ -4653,7 +4703,9 @@ El percentil compara el valor actual vs historico del ticker para detectar extre
                 if exp_ts == selected_exp:
                     c_ts, p_ts = calls, puts
                 else:
-                    ch_ts = stock.option_chain(exp_ts)
+                    ch_ts = _chain_for(exp_ts)
+                    if ch_ts is None:
+                        continue
                     c_ts = ch_ts.calls
                     p_ts = ch_ts.puts
                 # ATM IV for this expiration
@@ -5056,7 +5108,9 @@ El percentil compara el valor actual vs historico del ticker para detectar extre
             if exp_i == selected_exp:
                 c_df, p_df = calls_f, puts_f
             else:
-                ch = stock.option_chain(exp_i)
+                ch = _chain_for(exp_i)
+                if ch is None:
+                    continue
                 c_df = ch.calls[(ch.calls['strike'] >= strike_range[0]) & (ch.calls['strike'] <= strike_range[1])].copy()
                 p_df = ch.puts[(ch.puts['strike'] >= strike_range[0]) & (ch.puts['strike'] <= strike_range[1])].copy()
                 for df_ in [c_df, p_df]:
@@ -5307,7 +5361,9 @@ El percentil compara el valor actual vs historico del ticker para detectar extre
                 if exp_i == selected_exp:
                     c_df_i, p_df_i = calls_f.copy(), puts_f.copy()
                 else:
-                    ch_i = stock.option_chain(exp_i)
+                    ch_i = _chain_for(exp_i)
+                    if ch_i is None:
+                        continue
                     c_df_i = ch_i.calls[(ch_i.calls['strike'] >= strike_range[0]) & (ch_i.calls['strike'] <= strike_range[1])].copy()
                     p_df_i = ch_i.puts[(ch_i.puts['strike'] >= strike_range[0]) & (ch_i.puts['strike'] <= strike_range[1])].copy()
                     for df_ in [c_df_i, p_df_i]:

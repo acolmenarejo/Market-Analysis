@@ -175,6 +175,7 @@
   "options.rate_limit_warn": "⚠️ Yahoo Finance limitó las peticiones de opciones (rate limit). Esto suele resolverse en 30-60 segundos.",
   "options.rate_limit_hint": "Mientras tanto puedes consultar el chart técnico y los fundamentales.",
   "options.chain_rate_limit": "⚠️ Yahoo rate-limit al cargar la cadena {exp}. Espera 30s y pulsa Reintentar.",
+  "options.source_cboe": "📡 Datos de CBOE (retraso ~15 min) — Yahoo limitó las peticiones.",
   "options.retry_chain": "🔄 Reintentar cadena",
   "options.no_options": "No hay datos de opciones para {ticker}",
   "options.no_exp_data": "No hay datos de opciones para esta expiración.",

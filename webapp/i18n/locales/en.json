@@ -175,6 +175,7 @@
   "options.rate_limit_warn": "⚠️ Yahoo Finance throttled options requests (rate limit). Usually clears in 30-60 seconds.",
   "options.rate_limit_hint": "Meanwhile you can check the Technical and Fundamental tabs.",
   "options.chain_rate_limit": "⚠️ Yahoo rate-limited the {exp} chain. Wait 30s and retry.",
+  "options.source_cboe": "📡 Data from CBOE (~15 min delayed) — Yahoo throttled the request.",
   "options.retry_chain": "🔄 Retry chain",
   "options.no_options": "No options data for {ticker}",
   "options.no_exp_data": "No options data for this expiration.",
