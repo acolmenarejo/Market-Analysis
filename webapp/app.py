@@ -3351,6 +3351,10 @@ def show_stock_analysis():
                 if st.button(t("common.retry"), key=f"rl_retry_{ticker}", type="primary", use_container_width=True):
                     get_stock_data.clear()
                     st.rerun()
+            # No backup provider key means every Yahoo 429 is terminal — on
+            # hosted deploys that is the actual cause, not Yahoo being busy.
+            if data.get('fallbacks_configured') is False:
+                st.caption(t("rate_limit.no_fallback"))
             return
         elif err_code == 'ticker_not_found':
             st.error(f"❌ {t('error.ticker_not_found')}: **{ticker}**")

@@ -1820,6 +1820,20 @@ def get_historical_pe(ticker: str) -> dict:
         }
 
 
+def _price_fallbacks_configured() -> bool:
+    """True if any non-Yahoo price/fundamentals source has an API key.
+
+    Keys live in .env locally, which is gitignored — on Streamlit Cloud they
+    only exist as app Secrets. Without them a Yahoo 429 has nothing to fall
+    back to, so the UI must say that rather than blame Yahoo alone.
+    """
+    try:
+        from webapp.config import get_twelvedata_key, get_finnhub_key
+        return bool(get_twelvedata_key() or get_finnhub_key())
+    except Exception:
+        return False
+
+
 @st.cache_data(ttl=300, show_spinner=False)  # 5 minutos - aumentado para mejor performance
 def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
     """Obtiene datos completos de un stock"""
@@ -1854,6 +1868,7 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
                 'ticker': ticker,
                 'error': 'rate_limited',
                 'error_message': 'rate_limit.message',
+                'fallbacks_configured': _price_fallbacks_configured(),
                 'price': 0, 'rsi': 50, 'macd_bullish': False, 'momentum_1m': 0,
             }
         # Empty (not None) responses from BOTH endpoints almost always mean
@@ -2117,6 +2132,7 @@ def get_stock_data(ticker: str, period: str = "6mo") -> Dict[str, Any]:
             'error': 'rate_limited',
             'error_message': 'rate_limit.message',
             'error_detail': str(e),
+            'fallbacks_configured': _price_fallbacks_configured(),
             'price': 0,
             'rsi': 50,
             'macd_bullish': False,
