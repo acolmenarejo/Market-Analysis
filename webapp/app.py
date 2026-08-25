@@ -2280,11 +2280,31 @@ def show_dashboard():
         </div>
         <style>@keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0.4;} }</style>
         """, unsafe_allow_html=True)
-        # Yahoo Finance 24/7 stream — a persistent always-on feed, unlike a
-        # single scheduled broadcast whose recording expires and shows
-        # "live stream recording is not available". Swap this ID if it ever
-        # breaks.
-        st.video("https://www.youtube.com/watch?v=KQp-e_XQnDE", autoplay=True, muted=True)
+        # Resolve the channel's *current* broadcast at runtime — a pinned
+        # video ID dies the moment that stream ends ("live stream recording
+        # is not available"). Channel list lives in providers.LIVE_TV_CHANNELS.
+        import streamlit.components.v1 as components
+        from webapp.data.providers import (get_live_stream_video_id,
+                                           LIVE_TV_CHANNELS)
+        try:
+            _live_id = get_live_stream_video_id()
+        except Exception:
+            _live_id = None
+        if _live_id:
+            _embed = f"https://www.youtube.com/embed/{_live_id}"
+        else:
+            # Server-side lookup can fail on hosted deploys (YouTube blocks
+            # datacenter IPs). This form resolves the channel's current
+            # broadcast in the *viewer's* browser instead.
+            _embed = ("https://www.youtube.com/embed/live_stream?channel="
+                      + LIVE_TV_CHANNELS[0][1])
+        _sep = '&' if '?' in _embed else '?'
+        components.html(
+            f'<iframe src="{_embed}{_sep}autoplay=1&mute=1&playsinline=1" '
+            'style="width:100%; height:200px; border:0; border-radius:6px; '
+            'background:#0d1117;" allow="autoplay; encrypted-media; '
+            'picture-in-picture" allowfullscreen></iframe>',
+            height=205)
 
     with col_markets:
         # Global Markets Table — Spot (C) vs Futures (F) side by side

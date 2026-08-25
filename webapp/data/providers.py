@@ -2550,6 +2550,56 @@ def _twelvedata_history(ticker: str, period: str = '6mo') -> Optional[pd.DataFra
         return None
 
 
+# Channels tried in order for the dashboard's LIVE panel, as
+# (handle, channel_id). Never pin a video ID: each channel's current live
+# broadcast is resolved at runtime, and channel_id feeds the client-side
+# /embed/live_stream fallback used when the server-side lookup is blocked.
+LIVE_TV_CHANNELS = (
+    ('YahooFinance',        'UCEAZeUIeJs0IjQiqTCdVSIg'),
+    ('BloombergTelevision', 'UCyxnPZfofoutjmyvaV0GGeQ'),
+    ('CNBCtelevision',      'UCvJJ_dzjViJCoLf5uKUTwoA'),
+)
+
+
+@st.cache_data(ttl=900, show_spinner=False)  # 15min — streams rotate a few times/day
+def get_live_stream_video_id() -> Optional[str]:
+    """Resolve the video ID of whatever finance channel is live right now.
+
+    Hardcoding a single video ID breaks as soon as that broadcast ends —
+    YouTube then shows "live stream recording is not available". Scraping
+    /@handle/live returns the channel's *current* live video instead.
+    Returns None if no candidate channel is streaming.
+    """
+    import re
+    import requests
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                       'AppleWebKit/537.36 (KHTML, like Gecko) '
+                       'Chrome/120.0.0.0 Safari/537.36'),
+        'Accept-Language': 'en-US,en;q=0.9',
+    })
+    # Without SOCS, EU IPs get bounced to consent.youtube.com and the page
+    # carries no player data. CONSENT=YES+1 no longer suffices.
+    session.cookies.set('SOCS', 'CAI', domain='.youtube.com')
+    for handle, _cid in LIVE_TV_CHANNELS:
+        try:
+            r = session.get(f'https://www.youtube.com/@{handle}/live', timeout=8)
+            if not r.ok:
+                continue
+            html = r.text
+            # Only accept a page that is actually mid-broadcast; an ended
+            # stream still resolves but plays nothing.
+            if '"isLive":true' not in html and '"isLiveNow":true' not in html:
+                continue
+            m = re.search(r'"videoId":"([\w-]{11})"', html)
+            if m:
+                return m.group(1)
+        except Exception:
+            continue
+    return None
+
+
 @st.cache_data(ttl=60, show_spinner=False)  # 60s — crypto is real-time, keep fresh
 def get_crypto_realtime(yf_symbol: str) -> Optional[Dict[str, Any]]:
     """Real-time crypto spot from public exchange APIs (no key, no limit).
